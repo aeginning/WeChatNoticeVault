@@ -49,7 +49,7 @@ public class VaultNotificationListener extends NotificationListenerService {
     }
 
     private void persist(VaultRecord record) {
-        if (stopping) return;
+        // Tasks already accepted by the executor must finish even after service shutdown begins.
         try {
             if (database == null) database = new VaultDb(getApplicationContext());
             VaultPreferences.maybeCleanupExpired(getApplicationContext(), database, System.currentTimeMillis());
