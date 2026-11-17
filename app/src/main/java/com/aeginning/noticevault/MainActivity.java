@@ -187,14 +187,14 @@ public class MainActivity extends Activity {
         top.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView title = new TextView(this);
-        title.setText("消息留存 PRO");
+        title.setText("微信防撤回");
         title.setTextColor(Color.WHITE);
         title.setTextSize(25);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView version = new TextView(this);
-        version.setText("VERSION 2.1.4");
+        version.setText("VERSION 2.1.5");
         version.setTextColor(Color.WHITE);
         version.setTextSize(10);
         version.setLetterSpacing(0.06f);
@@ -673,7 +673,7 @@ public class MainActivity extends Activity {
             return;
         }
         Intent credentialIntent = keyguard.createConfirmDeviceCredentialIntent(
-                "解锁消息留存 PRO", "请验证手机锁屏凭据以访问本地消息");
+                "解锁微信防撤回", "请验证手机锁屏凭据以访问本地消息");
         if (credentialIntent == null) {
             VaultPreferences.setAppLockEnabled(this, false);
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
