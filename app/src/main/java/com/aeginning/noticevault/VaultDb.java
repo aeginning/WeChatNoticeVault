@@ -8,14 +8,9 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -67,15 +62,60 @@ public class VaultDb extends SQLiteOpenHelper {
         return queryAll();
     }
 
-    public synchronized List<VaultRecord> search(String query) throws Exception {
-        List<VaultRecord> result = new ArrayList<>();
-        String needle = query == null ? "" : query.toLowerCase(Locale.ROOT);
-        for (VaultRecord record : queryAll()) {
-            String haystack = (record.title + " " + record.text + " " + record.conversation)
-                    .toLowerCase(Locale.ROOT);
-            if (needle.isEmpty() || haystack.contains(needle)) result.add(record);
+    /**
+     * Reads only a bounded page into memory. A query scans encrypted rows newest-first and
+     * stops as soon as it finds enough matches; unlike the legacy search(), it never retains
+     * all 10,000 decoded records in a List.
+     */
+    public synchronized List<VaultRecord> searchPage(String query, String typeFilter,
+                                                      long beforeTimestamp, long beforeId,
+                                                      int limit) throws Exception {
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        if (needle.length() > 128) needle = needle.substring(0, 128);
+
+        StringBuilder selection = new StringBuilder();
+        List<String> args = new ArrayList<>();
+        if (VaultRecord.MESSAGE.equals(typeFilter) || VaultRecord.REVOKE.equals(typeFilter)) {
+            selection.append("type=?");
+            args.add(typeFilter);
+        }
+        if (beforeTimestamp > 0L) {
+            if (selection.length() > 0) selection.append(" AND ");
+            selection.append("(ts < ? OR (ts = ? AND _id < ?))");
+            args.add(String.valueOf(beforeTimestamp));
+            args.add(String.valueOf(beforeTimestamp));
+            args.add(String.valueOf(beforeId));
+        }
+
+        List<VaultRecord> result = new ArrayList<>(safeLimit);
+        Cursor cursor = getReadableDatabase().query(
+                "records", new String[]{"_id", "ts", "payload"},
+                selection.length() == 0 ? null : selection.toString(),
+                args.isEmpty() ? null : args.toArray(new String[0]),
+                null, null, "ts DESC, _id DESC", null);
+        try {
+            while (cursor.moveToNext()) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Search cancelled");
+                VaultRecord record = decode(cursor.getBlob(2));
+                record.id = cursor.getLong(0);
+                if (!needle.isEmpty()) {
+                    String haystack = (record.title + " " + record.text + " " + record.conversation)
+                            .toLowerCase(Locale.ROOT);
+                    if (!haystack.contains(needle)) continue;
+                }
+                result.add(record);
+                if (result.size() >= safeLimit) break;
+            }
+        } finally {
+            cursor.close();
         }
         return result;
+    }
+
+    /** Legacy full search retained for internal compatibility; new UI must use searchPage(). */
+    public synchronized List<VaultRecord> search(String query) throws Exception {
+        return searchPage(query, null, 0L, 0L, MAX_RECORDS);
     }
 
     private List<VaultRecord> queryAll() throws Exception {
@@ -145,19 +185,23 @@ public class VaultDb extends SQLiteOpenHelper {
     }
 
     private boolean containsDuplicate(VaultRecord record, SQLiteDatabase db) throws Exception {
-        Cursor cursor = db.query("records", new String[]{"payload"},
+        return findDuplicateId(record, db) > 0L;
+    }
+
+    private long findDuplicateId(VaultRecord record, SQLiteDatabase db) throws Exception {
+        Cursor cursor = db.query("records", new String[]{"_id", "payload"},
                 "ts=? AND type=?",
                 new String[]{String.valueOf(record.timestamp), record.type},
-                null, null, "_id DESC", "32");
+                null, null, "_id DESC", "64");
         try {
             while (cursor.moveToNext()) {
-                VaultRecord old = decode(cursor.getBlob(0));
-                if (sameMessage(old, record)) return true;
+                VaultRecord old = decode(cursor.getBlob(1));
+                if (sameMessage(old, record)) return cursor.getLong(0);
             }
         } finally {
             cursor.close();
         }
-        return false;
+        return -1L;
     }
 
     private static boolean sameMessage(VaultRecord left, VaultRecord right) {
@@ -180,20 +224,17 @@ public class VaultDb extends SQLiteOpenHelper {
         int skippedCount = 0;
         try {
             long startingCount = count();
-            Map<String, Long> known = new HashMap<>();
-            for (VaultRecord existing : queryAll()) known.put(fingerprint(existing), existing.id);
-
-            Map<Long, Long> remap = new HashMap<>();
+            Map<Long, Long> remap = new java.util.HashMap<>();
             List<VaultRecord> imported = new ArrayList<>();
-            Set<Long> importedIds = new HashSet<>();
 
             for (int i = 0; i < records.length(); i++) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Import cancelled");
                 VaultRecord record = VaultRecord.fromJson(records.getJSONObject(i));
                 validateRecord(record);
                 long oldId = record.id;
-                Long existingId = known.get(fingerprint(record));
+                long existingId = findDuplicateId(record, db);
                 long destinationId;
-                if (existingId != null) {
+                if (existingId > 0L) {
                     destinationId = existingId;
                     skippedCount++;
                 } else {
@@ -203,22 +244,21 @@ public class VaultDb extends SQLiteOpenHelper {
                     destinationId = insert(record);
                     record.id = destinationId;
                     imported.add(record);
-                    importedIds.add(destinationId);
-                    known.put(fingerprint(record), destinationId);
                     insertedCount++;
                 }
                 if (oldId > 0L) remap.put(oldId, destinationId);
             }
 
+            // Keep only newly imported records in memory; map old IDs after all IDs are known.
             for (VaultRecord record : imported) {
                 JSONArray mapped = new JSONArray();
                 for (int i = 0; i < record.candidates.length(); i++) {
                     long oldCandidate = record.candidates.optLong(i, -1L);
-                    Long newCandidate = remap.get(oldCandidate);
-                    if (newCandidate != null) mapped.put(newCandidate);
+                    Long freshId = remap.get(oldCandidate);
+                    if (freshId != null) mapped.put(freshId);
                 }
                 record.candidates = mapped;
-                if (importedIds.contains(record.id)) updatePayload(db, record);
+                updatePayload(db, record);
             }
             db.setTransactionSuccessful();
             return new int[]{insertedCount, skippedCount};
@@ -246,22 +286,29 @@ public class VaultDb extends SQLiteOpenHelper {
             throw new IllegalStateException("本机记录超过 10,000 条，请先设置保留期限或清理数据后再导出");
         }
         JSONArray array = new JSONArray();
-        for (VaultRecord record : queryAll()) array.put(record.toJson());
+        Cursor cursor = getReadableDatabase().query("records", new String[]{"_id", "payload"},
+                null, null, null, null, "ts DESC, _id DESC", String.valueOf(MAX_RECORDS));
+        try {
+            while (cursor.moveToNext()) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Export cancelled");
+                VaultRecord record = decode(cursor.getBlob(1));
+                record.id = cursor.getLong(0);
+                array.put(record.toJson());
+            }
+        } finally {
+            cursor.close();
+        }
         return array;
     }
 
     public synchronized void clearAll() {
-        getWritableDatabase().delete("records", null, null);
-    }
-
-    private static String fingerprint(VaultRecord record) throws Exception {
-        String value = record.timestamp + "\u0000" + safe(record.type) + "\u0000"
-                + safe(record.packageName) + "\u0000" + safe(record.conversation) + "\u0000"
-                + safe(record.title) + "\u0000" + safe(record.text);
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
-        StringBuilder result = new StringBuilder(digest.length * 2);
-        for (byte item : digest) result.append(String.format(Locale.ROOT, "%02x", item & 0xff));
-        return result.toString();
+        SQLiteDatabase db = getWritableDatabase();
+        db.delete("records", null, null);
+        // Release unused pages and WAL space after an explicit user-requested full clear.
+        try (Cursor ignored = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)) {
+            // Consume and close the pragma result.
+        } catch (RuntimeException ignored) { }
+        db.execSQL("VACUUM");
     }
 
     private static void validateRecord(VaultRecord record) {
