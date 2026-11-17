@@ -170,28 +170,40 @@ public class VaultDb extends SQLiteOpenHelper {
     public synchronized long saveWithRevokeLink(VaultRecord record) throws Exception {
         validateRecord(record);
         SQLiteDatabase db = getWritableDatabase();
-        if (containsDuplicate(record, db)) return -1L;
-
-        if (VaultRecord.REVOKE.equals(record.type)) {
-            long minTimestamp = record.timestamp - 5L * 60L * 1000L;
-            Cursor cursor = db.query("records", new String[]{"_id", "payload"},
-                    "type=? AND ts BETWEEN ? AND ?",
-                    new String[]{VaultRecord.MESSAGE, String.valueOf(minTimestamp), String.valueOf(record.timestamp)},
-                    null, null, "ts DESC, _id DESC", String.valueOf(MAX_RECORDS));
-            try {
-                while (cursor.moveToNext()) {
-                    VaultRecord previous = decode(cursor.getBlob(1));
-                    previous.id = cursor.getLong(0);
-                    if (RevokeMatcher.sameConversation(previous.conversation, record.conversation)) {
-                        if (record.candidates.length() < 1000) record.candidates.put(previous.id);
-                        else break;
-                    }
-                }
-            } finally {
-                cursor.close();
+        db.beginTransaction();
+        try {
+            // Check, candidate lookup and insert must be atomic against the activity's import writer.
+            if (containsDuplicate(record, db)) {
+                db.setTransactionSuccessful();
+                return -1L;
             }
+
+            if (VaultRecord.REVOKE.equals(record.type)) {
+                long minTimestamp = record.timestamp - 5L * 60L * 1000L;
+                Cursor cursor = db.query("records", new String[]{"_id", "payload"},
+                        "type=? AND ts BETWEEN ? AND ?",
+                        new String[]{VaultRecord.MESSAGE, String.valueOf(minTimestamp), String.valueOf(record.timestamp)},
+                        null, null, "ts DESC, _id DESC", String.valueOf(MAX_RECORDS));
+                try {
+                    while (cursor.moveToNext()) {
+                        VaultRecord previous = decode(cursor.getBlob(1));
+                        previous.id = cursor.getLong(0);
+                        if (RevokeMatcher.sameConversation(previous.conversation, record.conversation)) {
+                            if (record.candidates.length() < 1000) record.candidates.put(previous.id);
+                            else break;
+                        }
+                    }
+                } finally {
+                    cursor.close();
+                }
+            }
+
+            long insertedId = insert(record);
+            db.setTransactionSuccessful();
+            return insertedId;
+        } finally {
+            db.endTransaction();
         }
-        return insert(record);
     }
 
     private boolean containsDuplicate(VaultRecord record, SQLiteDatabase db) throws Exception {
