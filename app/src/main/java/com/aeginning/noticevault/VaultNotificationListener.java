@@ -8,17 +8,37 @@ import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /** Captures only content exposed by Android's notification API, never private app storage. */
 public class VaultNotificationListener extends NotificationListenerService {
     private static final String TAG = "NoticeVault";
     private static final int MAX_NOTIFICATION_TEXT = 16384;
 
-    private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
     private volatile boolean stopping;
     private VaultDb database;
+
+    // Bound queued notification objects to avoid unbounded memory growth during bursts.
+    private final ThreadPoolExecutor ioExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(256),
+            runnable -> {
+                Thread thread = new Thread(runnable, "NoticeVault-DB");
+                thread.setPriority(Thread.NORM_PRIORITY - 1);
+                return thread;
+            },
+            new ThreadPoolExecutor.AbortPolicy()) {
+        @Override
+        protected void terminated() {
+            if (database != null) {
+                database.close();
+                database = null;
+            }
+            super.terminated();
+        }
+    };
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
@@ -108,17 +128,8 @@ public class VaultNotificationListener extends NotificationListenerService {
     @Override
     public void onDestroy() {
         stopping = true;
-        try {
-            ioExecutor.execute(() -> {
-                if (database != null) {
-                    database.close();
-                    database = null;
-                }
-            });
-            ioExecutor.shutdown();
-        } catch (RuntimeException ignored) {
-            ioExecutor.shutdownNow();
-        }
+        // Graceful shutdown drains accepted notifications; terminated() closes the DB on its worker.
+        ioExecutor.shutdown();
         super.onDestroy();
     }
 }
