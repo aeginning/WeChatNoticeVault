@@ -33,11 +33,11 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
       - name: Package source archive
-        run: git archive --format=zip --output "$RUNNER_TEMP/WeChatNoticeVault-2.1.4-source.zip" HEAD
+        run: git archive --format=zip --output "$RUNNER_TEMP/WeChatNoticeVault-2.1.5-source.zip" HEAD
       - name: Upload source archive
         uses: actions/upload-artifact@v4
         with:
-          name: WeChatNoticeVault-2.1.4-source
+          name: WeChatNoticeVault-2.1.5-source
           path: ${{ runner.temp }}/WeChatNoticeVault-2.1.4-source.zip
           retention-days: 14
       - name: Upload test reports
@@ -50,7 +50,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: WeChatNoticeVault-2.1.4-debug-apk
+          name: WeChatNoticeVault-2.1.5-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
