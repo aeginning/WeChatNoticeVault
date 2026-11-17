@@ -5,19 +5,50 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 public class VaultRecord {
-    public static final String MESSAGE = "message", REVOKE = "revoke";
-    public long id, timestamp;
-    public String type, conversation, title, text, packageName;
+    public static final String MESSAGE = "message";
+    public static final String REVOKE = "revoke";
+
+    public long id;
+    public long timestamp;
+    public String type;
+    public String conversation;
+    public String title;
+    public String text;
+    public String packageName;
     public JSONArray candidates = new JSONArray();
-    public VaultRecord(long timestamp, String type, String conversation, String title, String text, String packageName) {
-        this.timestamp=timestamp; this.type=type; this.conversation=conversation; this.title=title; this.text=text; this.packageName=packageName;
+
+    public VaultRecord(long timestamp, String type, String conversation, String title,
+                       String text, String packageName) {
+        this.timestamp = timestamp;
+        this.type = type;
+        this.conversation = conversation == null ? "" : conversation;
+        this.title = title == null ? "" : title;
+        this.text = text == null ? "" : text;
+        this.packageName = packageName == null ? "" : packageName;
     }
+
     public JSONObject toJson() throws JSONException {
-        JSONObject o=new JSONObject(); o.put("id",id); o.put("timestamp",timestamp); o.put("type",type); o.put("conversation",conversation);
-        o.put("title",title); o.put("text",text); o.put("package",packageName); o.put("candidates",candidates); return o;
+        JSONObject object = new JSONObject();
+        object.put("id", id);
+        object.put("timestamp", timestamp);
+        object.put("type", type);
+        object.put("conversation", conversation);
+        object.put("title", title);
+        object.put("text", text);
+        object.put("package", packageName);
+        object.put("candidates", candidates == null ? new JSONArray() : candidates);
+        return object;
     }
-    public static VaultRecord fromJson(JSONObject o) throws JSONException {
-        VaultRecord r=new VaultRecord(o.getLong("timestamp"),o.getString("type"),o.optString("conversation"),o.optString("title"),o.optString("text"),o.optString("package"));
-        r.id=o.optLong("id",-1); r.candidates=o.optJSONArray("candidates")==null?new JSONArray():o.getJSONArray("candidates"); return r;
+
+    public static VaultRecord fromJson(JSONObject object) throws JSONException {
+        if (object == null) throw new IllegalArgumentException("记录对象为空");
+        VaultRecord record = new VaultRecord(
+                object.getLong("timestamp"), object.getString("type"),
+                object.optString("conversation", ""), object.optString("title", ""),
+                object.optString("text", ""), object.optString("package", ""));
+        record.id = object.optLong("id", -1L);
+        JSONArray candidateArray = object.optJSONArray("candidates");
+        record.candidates = candidateArray == null ? new JSONArray() : candidateArray;
+        return record;
     }
 }
