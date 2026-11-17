@@ -93,14 +93,14 @@ public class VaultDb extends SQLiteOpenHelper {
 
         List<VaultRecord> result = new ArrayList<>(safeLimit);
         Cursor cursor = getReadableDatabase().query(
-                "records", new String[]{"_id", "ts", "payload"},
+                "records", new String[]{"_id", "payload"},
                 selection.length() == 0 ? null : selection.toString(),
                 args.isEmpty() ? null : args.toArray(new String[0]),
                 null, null, "ts DESC, _id DESC", null);
         try {
             while (cursor.moveToNext()) {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Search cancelled");
-                VaultRecord record = decode(cursor.getBlob(2));
+                VaultRecord record = decode(cursor.getBlob(1));
                 record.id = cursor.getLong(0);
                 if (!needle.isEmpty()
                         && !containsIgnoreCase(record.title, needle)
@@ -177,7 +177,7 @@ public class VaultDb extends SQLiteOpenHelper {
             Cursor cursor = db.query("records", new String[]{"_id", "payload"},
                     "type=? AND ts BETWEEN ? AND ?",
                     new String[]{VaultRecord.MESSAGE, String.valueOf(minTimestamp), String.valueOf(record.timestamp)},
-                    null, null, "ts DESC", String.valueOf(MAX_RECORDS));
+                    null, null, "ts DESC, _id DESC", String.valueOf(MAX_RECORDS));
             try {
                 while (cursor.moveToNext()) {
                     VaultRecord previous = decode(cursor.getBlob(1));
