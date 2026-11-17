@@ -35,3 +35,5 @@ JUnit tests cover the pure-Java compression helper and its decompression limit. 
 - Remove the unused POST_NOTIFICATIONS permission declaration. The app reads notifications through the user-granted Notification Listener access and does not post notifications itself.
 - Keep applicationId, SQLite database name/schema, Android Keystore alias and backup envelope unchanged for upgrade compatibility.
 - Launcher icon resource remains pending confirmation of the exact standalone image asset in the user's Library; no unrelated screenshot or image was substituted.
+
+- Make notification duplicate detection, revoke-candidate lookup and row insertion one SQLite transaction, so they cannot race against the separate backup-import writer.
