@@ -2,8 +2,13 @@ package com.aeginning.noticevault;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.KeyguardManager;
 import android.content.Intent;
+import android.content.ComponentName;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -18,6 +23,7 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -29,6 +35,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.json.JSONArray;
@@ -39,6 +50,8 @@ public class MainActivity extends Activity {
     private static final int REQ_PERMISSION = 210;
     private static final int CREATE_BACKUP = 301;
     private static final int OPEN_BACKUP = 302;
+    private static final int REQUEST_DEVICE_UNLOCK = 910;
+    private static final int BACKUP_SCHEMA_VERSION = 1;
     private static final int MAX_VISIBLE_RECORDS = 100;
     private static final int MAX_BACKUP_RECORDS = 10000;
     private static final int MAX_BACKUP_BYTES = 50 * 1024 * 1024;
@@ -57,10 +70,15 @@ public class MainActivity extends Activity {
     private TextView shizukuServiceValue;
     private TextView shizukuPermissionValue;
     private TextView statusDetail;
+    private TextView totalCountValue;
+    private TextView todayCountValue;
     private String shizukuMessage = "Shizuku 权限状态尚未检查";
     private char[] pendingPassword;
     private boolean backupRunning;
     private boolean destroyed;
+    private boolean appUnlockedForSession;
+    private boolean unlockRequestInProgress;
+    private long backgroundAt;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
@@ -88,7 +106,10 @@ public class MainActivity extends Activity {
         configureSystemBars();
         buildUi();
         refreshStatus();
-        scheduleSearch("");
+        if (!VaultPreferences.isAppLockEnabled(this)) {
+            scheduleSearch("");
+            refreshMetrics();
+        }
     }
 
     private void configureSystemBars() {
@@ -117,11 +138,17 @@ public class MainActivity extends Activity {
 
         buildHero(root);
         buildStatusCard(root);
+        buildMetricsCard(root);
         addSectionHeading(root, "权限与运行", "完成基础授权，让消息留存持续运行");
         addActionCard(root, "◉", "开启通知监听权限", "允许系统将可见通知交给本应用处理", COLOR_BLUE,
             () -> startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
         addActionCard(root, "⌘", "检查 / 申请 Shizuku 权限", "无线调试启动 · 无需 Root", COLOR_GREEN, this::requestShizuku);
         addActionCard(root, "⚙", "电池优化设置", "检查系统后台限制，减少进程被停止的情况", COLOR_MUTED, this::openBatterySettings);
+
+        addSectionHeading(root, "隐私与通知来源", "选择保存哪些应用的通知，并控制本地数据保留时间");
+        addActionCard(root, "▣", "通知来源管理", "默认仅保存微信通知，可按需添加其他应用", COLOR_BLUE, this::showSourcePicker);
+        addActionCard(root, "◷", "自动清理期限", "可关闭，或设置保留 7 / 30 / 90 天", COLOR_MUTED, this::showRetentionDialog);
+        addActionCard(root, "▤", "设备锁保护", "使用手机系统锁屏密码或生物识别验证", COLOR_GREEN, this::toggleAppLock);
 
         addSectionHeading(root, "备份与数据", "备份文件使用密码加密，请妥善保管密码");
         addActionCard(root, "⇧", "导出加密备份", "将本机留存记录导出为 .nvbk 文件", COLOR_BLUE, () -> passwordDialog(true));
@@ -152,7 +179,7 @@ public class MainActivity extends Activity {
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView version = new TextView(this);
-        version.setText("VERSION 2.1.2");
+        version.setText("VERSION 2.1.3");
         version.setTextColor(Color.WHITE);
         version.setTextSize(10);
         version.setLetterSpacing(0.06f);
@@ -170,7 +197,7 @@ public class MainActivity extends Activity {
         hero.addView(subtitle, subtitleLp);
 
         TextView note = new TextView(this);
-        note.setText("消息内容保存在本机，不会自动上传到云端");
+        note.setText("只保存 Android 实际提供的通知内容；不读取微信私有数据库，也无法保证留存未显示为系统通知的消息");
         note.setTextColor(0xBBDDEBFA);
         note.setTextSize(11);
         LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2);
@@ -221,6 +248,65 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
         cardLp.bottomMargin = dp(22);
         root.addView(card, cardLp);
+    }
+
+    private void buildMetricsCard(LinearLayout root) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+        card.setBackground(roundBackground(Color.WHITE, dp(18), 0xFFE8EDF3, dp(1)));
+        LinearLayout total = createMetricTile("累计留存", "读取中");
+        LinearLayout today = createMetricTile("今日新增", "读取中");
+        totalCountValue = (TextView) total.getTag();
+        todayCountValue = (TextView) today.getTag();
+        card.addView(total, new LinearLayout.LayoutParams(0, -2, 1));
+        card.addView(today, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.bottomMargin = dp(22);
+        root.addView(card, lp);
+    }
+
+    private LinearLayout createMetricTile(String label, String value) {
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setGravity(Gravity.CENTER);
+        TextView title = text(label, 11, COLOR_MUTED, false);
+        TextView number = text(value, 21, COLOR_TEXT, true);
+        LinearLayout.LayoutParams numberLp = new LinearLayout.LayoutParams(-1, -2);
+        numberLp.topMargin = dp(5);
+        number.setGravity(Gravity.CENTER);
+        title.setGravity(Gravity.CENTER);
+        tile.addView(title);
+        tile.addView(number, numberLp);
+        tile.setTag(number);
+        return tile;
+    }
+
+    private void refreshMetrics() {
+        if (destroyed || totalCountValue == null || todayCountValue == null) return;
+        ioExecutor.execute(() -> {
+            long total = 0L;
+            long today = 0L;
+            try (VaultDb db = new VaultDb(getApplicationContext())) {
+                VaultPreferences.maybeCleanupExpired(getApplicationContext(), db, System.currentTimeMillis());
+                total = db.count();
+                java.util.Calendar calendar = java.util.Calendar.getInstance();
+                calendar.set(java.util.Calendar.HOUR_OF_DAY, 0);
+                calendar.set(java.util.Calendar.MINUTE, 0);
+                calendar.set(java.util.Calendar.SECOND, 0);
+                calendar.set(java.util.Calendar.MILLISECOND, 0);
+                today = db.countSince(calendar.getTimeInMillis());
+            } catch (Exception error) {
+                // The primary record list reports detailed read errors separately.
+            }
+            final long totalResult = total;
+            final long todayResult = today;
+            mainHandler.post(() -> {
+                if (destroyed || totalCountValue == null || todayCountValue == null) return;
+                totalCountValue.setText(String.valueOf(totalResult));
+                todayCountValue.setText(String.valueOf(todayResult));
+            });
+        });
     }
 
     private StatusTile createStatusTile(String label) {
@@ -354,7 +440,7 @@ public class MainActivity extends Activity {
         searchLp.topMargin = dp(12);
         root.addView(searchCard, searchLp);
 
-        TextView hint = text("搜索范围：最近 10,000 条留存记录", 10, COLOR_MUTED, false);
+        TextView hint = text("搜索范围：最近 10,000 条留存记录 · 点击消息卡片查看完整内容", 10, COLOR_MUTED, false);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
         hintLp.topMargin = dp(6);
         hintLp.bottomMargin = dp(9);
@@ -392,7 +478,17 @@ public class MainActivity extends Activity {
         }
 
         String enabled = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
-        boolean listenerEnabled = enabled != null && enabled.contains(getPackageName());
+        boolean listenerEnabled = false;
+        if (enabled != null) {
+            ComponentName expected = new ComponentName(this, VaultNotificationListener.class);
+            for (String entry : enabled.split(":")) {
+                ComponentName component = ComponentName.unflattenFromString(entry);
+                if (expected.equals(component)) {
+                    listenerEnabled = true;
+                    break;
+                }
+            }
+        }
 
         updateStatusTile(notificationValue, "通知监听", listenerEnabled);
         updateStatusTile(shizukuServiceValue, "Shizuku 服务", shizukuAlive);
@@ -408,6 +504,157 @@ public class MainActivity extends Activity {
         value.setTextColor(active ? COLOR_GREEN : COLOR_RED);
         value.setBackground(roundBackground(active ? 0xFFE9F7F0 : 0xFFFFEEEE, dp(30), Color.TRANSPARENT, 0));
         value.setPadding(dp(7), dp(4), dp(7), dp(4));
+    }
+
+    private void showSourcePicker() {
+        PackageManager packageManager = getPackageManager();
+        Intent launcherIntent = new Intent(Intent.ACTION_MAIN);
+        launcherIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> launchable = packageManager.queryIntentActivities(launcherIntent, 0);
+        List<AppChoice> choices = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (ResolveInfo info : launchable) {
+            if (info.activityInfo == null) continue;
+            String packageName = info.activityInfo.packageName;
+            if (packageName == null || packageName.equals(getPackageName()) || !seen.add(packageName)) continue;
+            CharSequence label = info.loadLabel(packageManager);
+            choices.add(new AppChoice(packageName, label == null ? packageName : label.toString()));
+        }
+        try {
+            android.content.pm.ApplicationInfo wechat = packageManager.getApplicationInfo(VaultPreferences.WECHAT_PACKAGE, 0);
+            if (seen.add(VaultPreferences.WECHAT_PACKAGE)) {
+                CharSequence label = packageManager.getApplicationLabel(wechat);
+                choices.add(new AppChoice(VaultPreferences.WECHAT_PACKAGE,
+                        label == null ? "微信" : label.toString()));
+            }
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // WeChat is not installed; other launchable applications remain selectable.
+        }
+        Collections.sort(choices, Comparator.comparing((AppChoice choice) -> choice.label.toLowerCase(java.util.Locale.ROOT)));
+        if (choices.isEmpty()) {
+            toast("未找到可选应用，请检查系统应用列表权限");
+            return;
+        }
+
+        Set<String> selected = new HashSet<>(VaultPreferences.getAllowedPackages(this));
+        CharSequence[] labels = new CharSequence[choices.size()];
+        boolean[] checked = new boolean[choices.size()];
+        for (int i = 0; i < choices.size(); i++) {
+            AppChoice choice = choices.get(i);
+            labels[i] = choice.label + "  ·  " + choice.packageName;
+            checked[i] = selected.contains(choice.packageName);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("允许留存通知的应用")
+                .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> {
+                    String packageName = choices.get(which).packageName;
+                    if (isChecked) selected.add(packageName);
+                    else selected.remove(packageName);
+                })
+                .setNeutralButton("仅微信", (dialog, which) -> {
+                    Set<String> defaults = new HashSet<>();
+                    defaults.add(VaultPreferences.WECHAT_PACKAGE);
+                    VaultPreferences.setAllowedPackages(this, defaults);
+                    toast("已恢复为仅保存微信通知");
+                })
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存", (dialog, which) -> {
+                    VaultPreferences.setAllowedPackages(this, selected);
+                    toast("通知来源设置已保存：" + selected.size() + " 个应用");
+                })
+                .show();
+    }
+
+    private void showRetentionDialog() {
+        final int[] retentionDays = new int[]{0, 7, 30, 90};
+        CharSequence[] labels = new CharSequence[]{"关闭自动清理（永久保留）", "保留 7 天", "保留 30 天", "保留 90 天"};
+        int current = VaultPreferences.getRetentionDays(this);
+        int selected = 0;
+        for (int i = 0; i < retentionDays.length; i++) if (retentionDays[i] == current) selected = i;
+        new AlertDialog.Builder(this)
+                .setTitle("自动清理期限")
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    VaultPreferences.setRetentionDays(this, retentionDays[which]);
+                    dialog.dismiss();
+                    toast(retentionDays[which] == 0 ? "已关闭自动清理" : "已设置保留 " + retentionDays[which] + " 天");
+                    refreshMetrics();
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void toggleAppLock() {
+        if (VaultPreferences.isAppLockEnabled(this)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("关闭设备锁保护")
+                    .setMessage("关闭后，打开应用时不再要求系统锁屏凭据验证。")
+                    .setNegativeButton("保留保护", null)
+                    .setPositiveButton("关闭保护", (dialog, which) -> {
+                        VaultPreferences.setAppLockEnabled(this, false);
+                        appUnlockedForSession = false;
+                        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                        toast("设备锁保护已关闭");
+                        refreshMetrics();
+                        scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                        refreshMetrics();
+                        scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                    })
+                    .show();
+            return;
+        }
+
+        KeyguardManager keyguard = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        if (keyguard == null || !keyguard.isDeviceSecure()) {
+            toast("请先在手机系统设置中设置锁屏密码、图案或生物识别，再启用应用锁");
+            try {
+                startActivity(new Intent(Settings.ACTION_SECURITY_SETTINGS));
+            } catch (Exception ignored) { }
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("启用设备锁保护")
+                .setMessage("每次冷启动或离开应用超过 60 秒后，使用手机系统锁屏凭据验证。应用会隐藏最近任务缩略图。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("启用", (dialog, which) -> {
+                    VaultPreferences.setAppLockEnabled(this, true);
+                    appUnlockedForSession = false;
+                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                    enforceAppLock();
+                })
+                .show();
+    }
+
+    private void enforceAppLock() {
+        if (!VaultPreferences.isAppLockEnabled(this)) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            return;
+        }
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        if (appUnlockedForSession || unlockRequestInProgress) return;
+
+        KeyguardManager keyguard = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        if (keyguard == null || !keyguard.isDeviceSecure()) {
+            VaultPreferences.setAppLockEnabled(this, false);
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            toast("系统锁屏凭据已移除，应用锁保护已关闭");
+            return;
+        }
+        Intent credentialIntent = keyguard.createConfirmDeviceCredentialIntent(
+                "解锁消息留存 PRO", "请验证手机锁屏凭据以访问本地消息");
+        if (credentialIntent == null) {
+            VaultPreferences.setAppLockEnabled(this, false);
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            toast("系统未提供凭据验证界面，应用锁已关闭");
+            return;
+        }
+        try {
+            unlockRequestInProgress = true;
+            startActivityForResult(credentialIntent, REQUEST_DEVICE_UNLOCK);
+        } catch (Exception error) {
+            unlockRequestInProgress = false;
+            toast("无法启动系统身份验证，请检查手机锁屏设置");
+        }
     }
 
     private void requestShizuku() {
@@ -454,11 +701,12 @@ public class MainActivity extends Activity {
     private void clearAllRecords() {
         recordCount.setText("正在清空…");
         ioExecutor.execute(() -> {
-            try {
-                new VaultDb(getApplicationContext()).clearAll();
+            try (VaultDb db = new VaultDb(getApplicationContext())) {
+                db.clearAll();
                 mainHandler.post(() -> {
                     if (destroyed) return;
                     toast("本机记录已清空");
+                    refreshMetrics();
                     scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
                 });
             } catch (Throwable error) {
@@ -482,8 +730,9 @@ public class MainActivity extends Activity {
         ioExecutor.execute(() -> {
             List<VaultRecord> records = null;
             String errorMessage = null;
-            try {
-                records = new VaultDb(getApplicationContext()).search(query);
+            try (VaultDb db = new VaultDb(getApplicationContext())) {
+                VaultPreferences.maybeCleanupExpired(getApplicationContext(), db, System.currentTimeMillis());
+                records = db.search(query);
             } catch (Exception error) {
                 errorMessage = error.getMessage();
             }
@@ -505,6 +754,7 @@ public class MainActivity extends Activity {
         }
 
         int total = records.size();
+        refreshMetrics();
         int visible = Math.min(total, MAX_VISIBLE_RECORDS);
         recordCount.setText(query.trim().isEmpty()
             ? total + " 条记录"
@@ -531,6 +781,9 @@ public class MainActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(15), dp(14), dp(15), dp(14));
         card.setBackground(roundBackground(Color.WHITE, dp(16), 0xFFE7EDF3, dp(1)));
+        card.setClickable(true);
+        card.setFocusable(true);
+        card.setOnClickListener(view -> showRecordDetails(record));
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
@@ -580,6 +833,32 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
         cardLp.bottomMargin = dp(9);
         recordList.addView(card, cardLp);
+    }
+
+    private void showRecordDetails(VaultRecord record) {
+        String time = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", record.timestamp).toString();
+        String content = "时间：" + time + "\n应用：" + safe(record.packageName)
+                + "\n会话：" + safe(record.conversation)
+                + "\n标题：" + safe(record.title)
+                + "\n\n" + safe(record.text);
+        TextView detail = text(content, 14, COLOR_TEXT, false);
+        detail.setTextIsSelectable(true);
+        detail.setPadding(dp(18), dp(14), dp(18), dp(14));
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.addView(detail, new ScrollView.LayoutParams(-1, -2));
+        new AlertDialog.Builder(this)
+                .setTitle(VaultRecord.REVOKE.equals(record.type) ? "撤回通知详情" : "消息详情")
+                .setView(scroll)
+                .setNeutralButton("复制内容", (dialog, which) -> {
+                    ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(ClipData.newPlainText("NoticeVault message", content));
+                        toast("消息内容已复制");
+                    }
+                })
+                .setPositiveButton("关闭", null)
+                .show();
     }
 
     private void addEmptyState(String title, String message) {
@@ -658,6 +937,18 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == REQUEST_DEVICE_UNLOCK) {
+            unlockRequestInProgress = false;
+            if (result == RESULT_OK) {
+                appUnlockedForSession = true;
+                refreshMetrics();
+                scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                return;
+            }
+            toast("身份验证未完成，已退出应用");
+            finish();
+            return;
+        }
         if (request != CREATE_BACKUP && request != OPEN_BACKUP) return;
         if (result != RESULT_OK || data == null || data.getData() == null) {
             clearPendingPassword();
@@ -689,7 +980,12 @@ public class MainActivity extends Activity {
                     if (exporting) {
                         JSONArray records = db.exportRecords();
                         if (records.length() > MAX_BACKUP_RECORDS) throw new IllegalArgumentException("备份记录超过数量限制");
-                        plain = records.toString().getBytes(StandardCharsets.UTF_8);
+                        JSONObject envelope = new JSONObject();
+                        envelope.put("format", "NoticeVaultBackup");
+                        envelope.put("version", BACKUP_SCHEMA_VERSION);
+                        envelope.put("exportedAt", System.currentTimeMillis());
+                        envelope.put("records", records);
+                        plain = envelope.toString().getBytes(StandardCharsets.UTF_8);
                         if (plain.length > MAX_BACKUP_BYTES - 49) throw new IllegalArgumentException("备份数据超过 50 MB 限制");
                         packed = BackupCrypto.encrypt(plain, taskPassword);
                         try (OutputStream output = resolver.openOutputStream(uri)) {
@@ -704,13 +1000,37 @@ public class MainActivity extends Activity {
                             packed = readAllLimited(stream, MAX_BACKUP_BYTES);
                         }
                         plain = BackupCrypto.decrypt(packed, taskPassword);
-                        JSONArray records = new JSONArray(new String(plain, StandardCharsets.UTF_8));
+                        String json = new String(plain, StandardCharsets.UTF_8).trim();
+                        JSONArray records;
+                        if (json.startsWith("[")) {
+                            // Backward compatibility with the original 2.1.0/2.1.2 array payload.
+                            records = new JSONArray(json);
+                        } else {
+                            JSONObject envelope = new JSONObject(json);
+                            if (!"NoticeVaultBackup".equals(envelope.optString("format"))) {
+                                throw new IllegalArgumentException("备份文件标识无效");
+                            }
+                            int schemaVersion = envelope.optInt("version", -1);
+                            if (schemaVersion < 1 || schemaVersion > BACKUP_SCHEMA_VERSION) {
+                                throw new IllegalArgumentException("备份版本不受支持");
+                            }
+                            records = envelope.optJSONArray("records");
+                            if (records == null) throw new IllegalArgumentException("备份记录数据缺失");
+                        }
                         if (records.length() > MAX_BACKUP_RECORDS) throw new IllegalArgumentException("备份记录超过 10000 条限制");
-                        db.importRecords(records);
-                        message = "导入完成：" + records.length() + " 条";
+                        int[] importResult = db.importRecords(records);
+                        message = "导入完成：新增 " + importResult[0] + " 条，跳过重复 " + importResult[1] + " 条";
                     }
                 } catch (Exception error) {
-                    message = "备份操作失败：" + (error instanceof java.io.IOException ? "文件读取或写入失败" : "密码错误、文件损坏或数据格式不支持");
+                    if (error instanceof javax.crypto.AEADBadTagException) {
+                        message = "备份操作失败：密码不正确，或备份文件已损坏/被修改";
+                    } else if (error instanceof java.io.IOException) {
+                        message = "备份操作失败：文件读取或写入失败";
+                    } else {
+                        String detail = error.getMessage();
+                        message = "备份操作失败：" + (detail == null || detail.trim().isEmpty()
+                                ? "文件格式无效或数据校验失败" : detail);
+                    }
                 } finally {
                     java.util.Arrays.fill(taskPassword, (char) 0);
                     if (plain != null) java.util.Arrays.fill(plain, (byte) 0);
@@ -788,8 +1108,22 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (backgroundAt > 0L) {
+            if (System.currentTimeMillis() - backgroundAt > 60_000L) appUnlockedForSession = false;
+            backgroundAt = 0L;
+        }
+        enforceAppLock();
         refreshStatus();
-        if (searchInput != null) scheduleSearch(searchInput.getText().toString());
+        if (!VaultPreferences.isAppLockEnabled(this) || appUnlockedForSession) {
+            refreshMetrics();
+            if (searchInput != null) scheduleSearch(searchInput.getText().toString());
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        backgroundAt = System.currentTimeMillis();
+        super.onStop();
     }
 
     @Override
@@ -798,9 +1132,19 @@ public class MainActivity extends Activity {
         clearPendingPassword();
         searchGeneration++;
         if (pendingSearch != null) mainHandler.removeCallbacks(pendingSearch);
-        ioExecutor.shutdownNow();
+        // Let queued I/O tasks finish so temporary backup passwords and buffers reach their finally blocks.
+        ioExecutor.shutdown();
         Shizuku.removeRequestPermissionResultListener(permissionListener);
         super.onDestroy();
+    }
+
+    private static final class AppChoice {
+        final String packageName;
+        final String label;
+        AppChoice(String packageName, String label) {
+            this.packageName = packageName;
+            this.label = label;
+        }
     }
 
     private static final class StatusTile {
