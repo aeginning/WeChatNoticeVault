@@ -24,9 +24,11 @@ public class VaultDb extends SQLiteOpenHelper {
     private static final String DB = "noticevault.db";
     private static final int VERSION = 1;
     private static final int MAX_RECORDS = 10000;
+    private final Context appContext;
 
     public VaultDb(Context context) {
-        super(context, DB, null, VERSION);
+        super(context.getApplicationContext(), DB, null, VERSION);
+        appContext = context.getApplicationContext();
         setWriteAheadLoggingEnabled(true);
     }
 
@@ -321,6 +323,20 @@ public class VaultDb extends SQLiteOpenHelper {
         } catch (RuntimeException ignored) {
             // Another active connection may temporarily prevent compaction; deletion is still complete.
         }
+    }
+
+    /** Explicit storage maintenance; called from a background thread only. */
+    public synchronized long[] compactStorage() {
+        long beforeBytes = appContext.getDatabasePath(DB).length();
+        SQLiteDatabase db = getWritableDatabase();
+        try (Cursor checkpoint = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)) {
+            while (checkpoint.moveToNext()) {
+                // Drain checkpoint status before running VACUUM.
+            }
+        }
+        db.execSQL("VACUUM");
+        long afterBytes = appContext.getDatabasePath(DB).length();
+        return new long[]{beforeBytes, afterBytes};
     }
 
     private static void validateRecord(VaultRecord record) {
