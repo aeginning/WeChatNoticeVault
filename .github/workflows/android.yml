@@ -32,6 +32,14 @@ jobs:
         run: gradle --no-daemon testDebugUnitTest
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
+      - name: Package source archive
+        run: git archive --format=zip --output "$RUNNER_TEMP/WeChatNoticeVault-2.1.4-source.zip" HEAD
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeChatNoticeVault-2.1.4-source
+          path: ${{ runner.temp }}/WeChatNoticeVault-2.1.4-source.zip
+          retention-days: 14
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
