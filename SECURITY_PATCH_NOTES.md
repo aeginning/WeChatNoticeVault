@@ -37,3 +37,10 @@ JUnit tests cover the pure-Java compression helper and its decompression limit. 
 - Launcher icon resource remains pending confirmation of the exact standalone image asset in the user's Library; no unrelated screenshot or image was substituted.
 
 - Make notification duplicate detection, revoke-candidate lookup and row insertion one SQLite transaction, so they cannot race against the separate backup-import writer.
+
+
+# 2.1.6 launcher icon
+
+- Added an Android adaptive launcher icon using the latest Library image supplied by the user (`mmexport1794946980382.jpg`, sunflower field photograph), cropped/resized as the foreground artwork with a blue background layer.
+- Configured both `android:icon` and `android:roundIcon` to the adaptive icon resource.
+- Incremented versionName to 2.1.6 and versionCode to 216. No package ID, database schema, or Keystore alias changes.
