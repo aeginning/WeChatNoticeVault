@@ -8,94 +8,117 @@ import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/** Captures only content exposed by Android's notification API. */
+/** Captures only content exposed by Android's notification API, never private app storage. */
 public class VaultNotificationListener extends NotificationListenerService {
     private static final String TAG = "NoticeVault";
+    private static final int MAX_NOTIFICATION_TEXT = 16384;
+
+    private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
+    private volatile boolean stopping;
+    private VaultDb database;
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
-        if (sbn == null || !"com.tencent.mm".equals(sbn.getPackageName())) return;
+        if (stopping || sbn == null) return;
+        String packageName = sbn.getPackageName();
+        if (!VaultPreferences.isPackageAllowed(getApplicationContext(), packageName)) return;
 
-        Notification n = sbn.getNotification();
-        if (n == null || n.extras == null) return;
+        Notification notification = sbn.getNotification();
+        if (notification == null || notification.extras == null) return;
 
-        Bundle e = n.extras;
-        String title = cs(e.getCharSequence(Notification.EXTRA_TITLE));
-        String conversation = cs(e.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE));
-
+        Bundle extras = notification.extras;
+        String title = limit(cs(extras.getCharSequence(Notification.EXTRA_TITLE)), 1024);
+        String conversation = limit(cs(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)), 1024);
         if (conversation.isEmpty()) conversation = title;
-
-        String body = extractBody(e);
+        String body = limit(extractBody(extras), MAX_NOTIFICATION_TEXT);
         if (body.trim().isEmpty() && title.trim().isEmpty()) return;
 
         boolean revoke = RevokeMatcher.isRevokeNotice(title, body);
-        VaultRecord r = new VaultRecord(
-                sbn.getPostTime(),
-                revoke ? VaultRecord.REVOKE : VaultRecord.MESSAGE,
-                conversation,
-                title,
-                body,
-                sbn.getPackageName()
-        );
+        VaultRecord record = new VaultRecord(
+                sbn.getPostTime(), revoke ? VaultRecord.REVOKE : VaultRecord.MESSAGE,
+                conversation, title, body, packageName);
 
         try {
-            new VaultDb(getApplicationContext()).saveWithRevokeLink(r);
-            Log.i(TAG, "Stored notification record type=" + r.type);
-        } catch (Exception ex) {
-            Log.e(TAG, "Unable to persist notification", ex);
+            ioExecutor.execute(() -> persist(record));
+        } catch (RuntimeException error) {
+            if (!stopping) Log.w(TAG, "Notification persistence queue is unavailable", error);
         }
     }
 
-    private String extractBody(Bundle e) {
-        String big = cs(e.getCharSequence(Notification.EXTRA_BIG_TEXT));
-        if (!big.isEmpty()) return big;
+    private void persist(VaultRecord record) {
+        if (stopping) return;
+        try {
+            if (database == null) database = new VaultDb(getApplicationContext());
+            VaultPreferences.maybeCleanupExpired(getApplicationContext(), database, System.currentTimeMillis());
+            long id = database.saveWithRevokeLink(record);
+            Log.i(TAG, id > 0L ? "Notification saved" : "Duplicate notification ignored");
+        } catch (Exception error) {
+            Log.e(TAG, "Unable to persist notification record", error);
+        }
+    }
 
-        String text = cs(e.getCharSequence(Notification.EXTRA_TEXT));
+    private String extractBody(Bundle extras) {
+        String big = cs(extras.getCharSequence(Notification.EXTRA_BIG_TEXT));
+        if (!big.isEmpty()) return big;
+        String text = cs(extras.getCharSequence(Notification.EXTRA_TEXT));
         if (!text.isEmpty()) return text;
 
-        CharSequence[] lines =
-                e.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
-
+        CharSequence[] lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
         if (lines != null && lines.length > 0) {
-            StringBuilder b = new StringBuilder();
+            StringBuilder builder = new StringBuilder();
             for (CharSequence line : lines) {
-                if (b.length() > 0) b.append('\n');
-                b.append(line);
+                if (line == null) continue;
+                if (builder.length() > 0) builder.append('\n');
+                builder.append(line);
+                if (builder.length() >= MAX_NOTIFICATION_TEXT) break;
             }
-            return b.toString();
+            if (builder.length() > 0) return builder.toString();
         }
 
-        Parcelable[] messages =
-                e.getParcelableArray(Notification.EXTRA_MESSAGES);
-
-        // Android 11 (API 30) and newer: use the official typed parser.
+        Parcelable[] messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES);
         if (messages != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             List<Notification.MessagingStyle.Message> parsed =
-                    Notification.MessagingStyle.Message
-                            .getMessagesFromBundleArray(messages);
-
+                    Notification.MessagingStyle.Message.getMessagesFromBundleArray(messages);
             if (parsed != null) {
-                StringBuilder b = new StringBuilder();
-
+                StringBuilder builder = new StringBuilder();
                 for (Notification.MessagingStyle.Message message : parsed) {
-                    if (message == null) continue;
-
-                    CharSequence t = message.getText();
-                    if (t != null) {
-                        if (b.length() > 0) b.append('\n');
-                        b.append(t);
-                    }
+                    if (message == null || message.getText() == null) continue;
+                    if (builder.length() > 0) builder.append('\n');
+                    builder.append(message.getText());
+                    if (builder.length() >= MAX_NOTIFICATION_TEXT) break;
                 }
-
-                if (b.length() > 0) return b.toString();
+                if (builder.length() > 0) return builder.toString();
             }
         }
-
         return "";
     }
 
-    private static String cs(CharSequence c) {
-        return c == null ? "" : c.toString();
+    private static String cs(CharSequence value) {
+        return value == null ? "" : value.toString();
+    }
+
+    private static String limit(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) return value == null ? "" : value;
+        return value.substring(0, maxLength);
+    }
+
+    @Override
+    public void onDestroy() {
+        stopping = true;
+        try {
+            ioExecutor.execute(() -> {
+                if (database != null) {
+                    database.close();
+                    database = null;
+                }
+            });
+            ioExecutor.shutdown();
+        } catch (RuntimeException ignored) {
+            ioExecutor.shutdownNow();
+        }
+        super.onDestroy();
     }
 }
