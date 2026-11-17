@@ -26,15 +26,39 @@ public final class VaultCrypto {
         return kg.generateKey();
     }
     public static byte[] encrypt(byte[] plain) throws Exception {
-        Cipher c = Cipher.getInstance("AES/GCM/NoPadding"); c.init(Cipher.ENCRYPT_MODE, key());
-        byte[] nonce = c.getIV(), encrypted = c.doFinal(plain);
-        return ByteBuffer.allocate(1 + nonce.length + encrypted.length).put((byte) nonce.length).put(nonce).put(encrypted).array();
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key());
+        byte[] nonce = cipher.getIV();
+        byte[] encrypted = cipher.doFinal(plain);
+        try {
+            return ByteBuffer.allocate(1 + nonce.length + encrypted.length)
+                    .put((byte) nonce.length).put(nonce).put(encrypted).array();
+        } finally {
+            java.util.Arrays.fill(nonce, (byte) 0);
+            java.util.Arrays.fill(encrypted, (byte) 0);
+        }
     }
+
     public static byte[] decrypt(byte[] packed) throws Exception {
-        ByteBuffer b = ByteBuffer.wrap(packed); int n = b.get() & 0xff;
-        if (n != NONCE_BYTES || b.remaining() <= n) throw new IllegalArgumentException("Invalid encrypted record");
-        byte[] nonce = new byte[n], encrypted = new byte[b.remaining() - n]; b.get(nonce); b.get(encrypted);
-        Cipher c = Cipher.getInstance("AES/GCM/NoPadding"); c.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
-        return c.doFinal(encrypted);
+        if (packed == null || packed.length < 1 + NONCE_BYTES + 16) {
+            throw new IllegalArgumentException("Invalid encrypted record");
+        }
+        ByteBuffer buffer = ByteBuffer.wrap(packed);
+        int nonceLength = buffer.get() & 0xff;
+        if (nonceLength != NONCE_BYTES || buffer.remaining() <= nonceLength + 15) {
+            throw new IllegalArgumentException("Invalid encrypted record");
+        }
+        byte[] nonce = new byte[nonceLength];
+        byte[] encrypted = new byte[buffer.remaining() - nonceLength];
+        buffer.get(nonce);
+        buffer.get(encrypted);
+        try {
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+            return cipher.doFinal(encrypted);
+        } finally {
+            java.util.Arrays.fill(encrypted, (byte) 0);
+            java.util.Arrays.fill(nonce, (byte) 0);
+        }
     }
 }
