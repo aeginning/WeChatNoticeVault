@@ -1,26 +1,28 @@
-# 2.1.3 stability, privacy and recovery improvements
+# 2.1.4 memory, storage and responsiveness improvements
 
 ## Changes
 
-- Notification listener now filters by a persisted package allowlist (first-run default: WeChat only).
-- Notification callbacks enqueue persistence on a single background executor; the service reuses one `VaultDb` helper and queues its close during shutdown.
-- Duplicate notifications are checked against a narrow timestamp/type window before insertion.
-- Revoke matching queries only messages within the preceding five minutes instead of decrypting the entire local record set.
-- Retention cleanup is opt-in (off by default), supports 7/30/90 days, and runs at most twice daily when the app or listener next accesses storage.
-- Added optional Android device-credential app lock and `FLAG_SECURE` to hide app content in recent-task screenshots.
-- Added message detail view, copy action, total/today counters, and clear notification-capture limitations in the UI.
-- Backup plaintext now uses a versioned `NoticeVaultBackup` envelope. Import remains compatible with the previous direct JSON-array format.
-- Import remains transactional, validates record types/field sizes, remaps revoke references, and skips already-present duplicate records.
-- Export fails explicitly when the device contains more than 10,000 records instead of silently exporting only the newest 10,000.
-- Hardened encrypted-record parsing and added backup tamper-detection regression coverage.
+- Search now reads bounded pages of 30 records and decrypts only enough cursor rows to fill one page plus a look-ahead item.
+- Keyset pagination uses timestamp plus row ID, avoiding large offsets and stable-order gaps when timestamps collide.
+- Search uses a dedicated single-thread executor. A newer query cancels/interupts the previous cursor scan and cannot block backup/import I/O.
+- Notification ingestion now uses a single worker with a bounded 256-item queue and a named lower-priority thread. The queue drains accepted records during normal service shutdown.
+- Reused the medium Typeface instance instead of allocating it for every bold TextView.
+- Added one-tap filtering for all, ordinary messages and revoke notices.
+- New record payloads are GZIP-compressed only when the compressed bytes are smaller, then encrypted with the existing AES-GCM Keystore key. A high-bit compression flag maintains backward compatibility with older uncompressed encrypted rows.
+- Decompression is bounded to 64 KiB to prevent memory exhaustion from malformed/corrupt stored payloads.
+- Added explicit background database compaction (WAL checkpoint + VACUUM) and best-effort compaction after explicit clear-all.
+- Shizuku status is now visibly marked optional; missing Shizuku no longer looks like a missing core notification-listener permission.
+- Version 2.1.4 / versionCode 214.
 
-## Compatibility
+## Compatibility and data safety
 
-- SQLite schema version remains 1; no destructive schema migration is required.
-- Existing encrypted database rows retain the same AES-GCM `VaultCrypto` format and Keystore alias.
-- Existing `.nvbk` files with the `NVBK1` encrypted container and a JSON array plaintext payload remain importable.
-- App version is 2.1.3 (`versionCode 213`).
+- No SQLite schema migration and no change to the Keystore alias or AES-GCM key.
+- Old encrypted payload header values (nonce length 12) are still decoded as uncompressed records.
+- New records use the high-bit flag in the first payload byte to denote GZIP-compressed plaintext before AES-GCM encryption.
+- Existing records are not batch-rewritten at startup; they remain readable and will retain their old storage size until naturally replaced or exported/imported through the supported backup flow.
+- Automatic retention remains opt-in and disabled by default.
+- Search result presentation is now paginated; record data is not deleted when a page is unloaded.
 
 ## Validation boundary
 
-Source formatting, XML/YAML parsing, and standalone backup-crypto tests are checked locally. A full Android Gradle build, Android Keystore integration, notification lifecycle, device credential prompt, package visibility, and real-device battery behavior must still be confirmed by GitHub Actions and an Android 13 device test. No unverified result should be treated as passed.
+JUnit tests cover the pure-Java compression helper and its decompression limit. GitHub Actions must confirm compilation, all unit tests and Debug APK packaging. Real-device measurements are still required to quantify memory use, database file shrinkage, notification throughput, and touch responsiveness.
