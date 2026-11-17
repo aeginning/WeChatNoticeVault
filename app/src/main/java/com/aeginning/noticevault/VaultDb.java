@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -115,7 +116,14 @@ public class VaultDb extends SQLiteOpenHelper {
 
     /** Legacy full search retained for internal compatibility; new UI must use searchPage(). */
     public synchronized List<VaultRecord> search(String query) throws Exception {
-        return searchPage(query, null, 0L, 0L, MAX_RECORDS);
+        List<VaultRecord> result = new ArrayList<>();
+        String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        for (VaultRecord record : queryAll()) {
+            String haystack = (record.title + " " + record.text + " " + record.conversation)
+                    .toLowerCase(Locale.ROOT);
+            if (needle.isEmpty() || haystack.contains(needle)) result.add(record);
+        }
+        return result;
     }
 
     private List<VaultRecord> queryAll() throws Exception {
@@ -308,7 +316,11 @@ public class VaultDb extends SQLiteOpenHelper {
         try (Cursor ignored = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)) {
             // Consume and close the pragma result.
         } catch (RuntimeException ignored) { }
-        db.execSQL("VACUUM");
+        try {
+            db.execSQL("VACUUM");
+        } catch (RuntimeException ignored) {
+            // Another active connection may temporarily prevent compaction; deletion is still complete.
+        }
     }
 
     private static void validateRecord(VaultRecord record) {
