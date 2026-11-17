@@ -55,10 +55,10 @@ public class VaultNotificationListener extends NotificationListenerService {
             if (notification == null || notification.extras == null) return;
 
             Bundle extras = notification.extras;
-            String title = limit(cs(extras.getCharSequence(Notification.EXTRA_TITLE)), 1024);
-            String conversation = limit(cs(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)), 1024);
+            String title = bounded(extras.getCharSequence(Notification.EXTRA_TITLE), 1024);
+            String conversation = bounded(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE), 1024);
             if (conversation.isEmpty()) conversation = title;
-            String body = limit(extractBody(extras), MAX_NOTIFICATION_TEXT);
+            String body = extractBody(extras);
             if (body.trim().isEmpty() && title.trim().isEmpty()) return;
 
             boolean revoke = RevokeMatcher.isRevokeNotice(title, body);
@@ -102,9 +102,9 @@ public class VaultNotificationListener extends NotificationListenerService {
     }
 
     private String extractBody(Bundle extras) {
-        String big = cs(extras.getCharSequence(Notification.EXTRA_BIG_TEXT));
+        String big = bounded(extras.getCharSequence(Notification.EXTRA_BIG_TEXT), MAX_NOTIFICATION_TEXT);
         if (!big.isEmpty()) return big;
-        String text = cs(extras.getCharSequence(Notification.EXTRA_TEXT));
+        String text = bounded(extras.getCharSequence(Notification.EXTRA_TEXT), MAX_NOTIFICATION_TEXT);
         if (!text.isEmpty()) return text;
 
         CharSequence[] lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
@@ -112,9 +112,13 @@ public class VaultNotificationListener extends NotificationListenerService {
             StringBuilder builder = new StringBuilder();
             for (CharSequence line : lines) {
                 if (line == null) continue;
-                if (builder.length() > 0) builder.append('\n');
-                builder.append(line);
-                if (builder.length() >= MAX_NOTIFICATION_TEXT) break;
+                int remaining = MAX_NOTIFICATION_TEXT - builder.length();
+                if (remaining <= 0) break;
+                if (builder.length() > 0) {
+                    builder.append('\n');
+                    remaining--;
+                }
+                if (remaining > 0) builder.append(line, 0, Math.min(line.length(), remaining));
             }
             if (builder.length() > 0) return builder.toString();
         }
@@ -127,9 +131,16 @@ public class VaultNotificationListener extends NotificationListenerService {
                 StringBuilder builder = new StringBuilder();
                 for (Notification.MessagingStyle.Message message : parsed) {
                     if (message == null || message.getText() == null) continue;
-                    if (builder.length() > 0) builder.append('\n');
-                    builder.append(message.getText());
-                    if (builder.length() >= MAX_NOTIFICATION_TEXT) break;
+                    CharSequence messageText = message.getText();
+                    int remaining = MAX_NOTIFICATION_TEXT - builder.length();
+                    if (remaining <= 0) break;
+                    if (builder.length() > 0) {
+                        builder.append('\n');
+                        remaining--;
+                    }
+                    if (remaining > 0) {
+                        builder.append(messageText, 0, Math.min(messageText.length(), remaining));
+                    }
                 }
                 if (builder.length() > 0) return builder.toString();
             }
@@ -137,13 +148,11 @@ public class VaultNotificationListener extends NotificationListenerService {
         return "";
     }
 
-    private static String cs(CharSequence value) {
-        return value == null ? "" : value.toString();
-    }
-
-    private static String limit(String value, int maxLength) {
-        if (value == null || value.length() <= maxLength) return value == null ? "" : value;
-        return value.substring(0, maxLength);
+    /** Truncate the CharSequence before converting it to String to bound transient allocations. */
+    private static String bounded(CharSequence value, int maxLength) {
+        if (value == null || maxLength <= 0) return "";
+        int length = Math.min(value.length(), maxLength);
+        return length == 0 ? "" : value.subSequence(0, length).toString();
     }
 
     @Override
