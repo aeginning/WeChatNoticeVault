@@ -299,7 +299,6 @@ public class MainActivity extends Activity {
             long total = 0L;
             long today = 0L;
             try (VaultDb db = new VaultDb(getApplicationContext())) {
-                VaultPreferences.maybeCleanupExpired(getApplicationContext(), db, System.currentTimeMillis());
                 total = db.count();
                 java.util.Calendar calendar = java.util.Calendar.getInstance();
                 calendar.set(java.util.Calendar.HOUR_OF_DAY, 0);
