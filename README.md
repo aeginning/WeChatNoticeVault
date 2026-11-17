@@ -1,4 +1,4 @@
-# 微信防撤回 2.1.5
+# 微信防撤回 2.1.6
 
 Android 原生 Java 项目，面向 Android 8.0+（minSdk 26），JDK 17、AGP 8.7.3、Gradle 8.9、compileSdk 35。包名 `com.aeginning.noticevault`。
 
