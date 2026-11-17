@@ -4,10 +4,12 @@ import android.app.Notification;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcelable;
+import android.os.SystemClock;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -19,6 +21,8 @@ public class VaultNotificationListener extends NotificationListenerService {
 
     private volatile boolean stopping;
     private VaultDb database;
+    private volatile Set<String> allowedPackageCache;
+    private volatile long allowedPackageCacheAt;
 
     // Bound queued notification objects to avoid unbounded memory growth during bursts.
     private final ThreadPoolExecutor ioExecutor = new ThreadPoolExecutor(
@@ -44,7 +48,7 @@ public class VaultNotificationListener extends NotificationListenerService {
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (stopping || sbn == null) return;
         String packageName = sbn.getPackageName();
-        if (!VaultPreferences.isPackageAllowed(getApplicationContext(), packageName)) return;
+        if (!isPackageAllowed(packageName)) return;
 
         Notification notification = sbn.getNotification();
         if (notification == null || notification.extras == null) return;
@@ -66,6 +70,21 @@ public class VaultNotificationListener extends NotificationListenerService {
         } catch (RuntimeException error) {
             if (!stopping) Log.w(TAG, "Notification persistence queue is unavailable", error);
         }
+    }
+
+    private boolean isPackageAllowed(String packageName) {
+        long now = SystemClock.elapsedRealtime();
+        Set<String> cached = allowedPackageCache;
+        if (cached == null || now - allowedPackageCacheAt >= 5000L) {
+            synchronized (this) {
+                if (allowedPackageCache == null || now - allowedPackageCacheAt >= 5000L) {
+                    allowedPackageCache = VaultPreferences.getAllowedPackages(getApplicationContext());
+                    allowedPackageCacheAt = now;
+                }
+                cached = allowedPackageCache;
+            }
+        }
+        return packageName != null && cached != null && cached.contains(packageName);
     }
 
     private void persist(VaultRecord record) {
