@@ -26,3 +26,12 @@
 ## Validation boundary
 
 JUnit tests cover the pure-Java compression helper and its decompression limit. GitHub Actions must confirm compilation, all unit tests and Debug APK packaging. Real-device measurements are still required to quantify memory use, database file shrinkage, notification throughput, and touch responsiveness.
+
+
+# 2.1.5 application identity and callback bug fixes
+
+- Set the Android launcher/app/activity label to the Chinese product name 微信防撤回; use the same name for the notification listener service and home-screen title.
+- Catch malformed notification extras and queue rejection at the notification callback boundary so a single malformed Bundle cannot throw an uncaught runtime exception into Android's notification dispatch thread. Database persistence remains off the callback thread.
+- Remove the unused POST_NOTIFICATIONS permission declaration. The app reads notifications through the user-granted Notification Listener access and does not post notifications itself.
+- Keep applicationId, SQLite database name/schema, Android Keystore alias and backup envelope unchanged for upgrade compatibility.
+- Launcher icon resource remains pending confirmation of the exact standalone image asset in the user's Library; no unrelated screenshot or image was substituted.
