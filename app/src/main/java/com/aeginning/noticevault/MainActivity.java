@@ -40,6 +40,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.Future;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.json.JSONArray;
@@ -52,7 +53,7 @@ public class MainActivity extends Activity {
     private static final int OPEN_BACKUP = 302;
     private static final int REQUEST_DEVICE_UNLOCK = 910;
     private static final int BACKUP_SCHEMA_VERSION = 1;
-    private static final int MAX_VISIBLE_RECORDS = 100;
+    private static final int PAGE_SIZE = 30;
     private static final int MAX_BACKUP_RECORDS = 10000;
     private static final int MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
@@ -72,6 +73,8 @@ public class MainActivity extends Activity {
     private TextView statusDetail;
     private TextView totalCountValue;
     private TextView todayCountValue;
+    private LinearLayout filterRow;
+    private TextView loadMoreView;
     private String shizukuMessage = "Shizuku 权限状态尚未检查";
     private char[] pendingPassword;
     private boolean backupRunning;
@@ -79,9 +82,20 @@ public class MainActivity extends Activity {
     private boolean appUnlockedForSession;
     private boolean unlockRequestInProgress;
     private long backgroundAt;
+    private String currentQuery = "";
+    private String currentTypeFilter = "all";
+    private long nextBeforeTimestamp;
+    private long nextBeforeId;
+    private int displayedRecordCount;
+    private boolean hasMoreRecords;
+    private boolean searchLoading;
+
+    private static final Typeface MEDIUM_TYPEFACE = Typeface.create("sans-serif-medium", Typeface.NORMAL);
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
+    private Future<?> activeSearchFuture;
     private Runnable pendingSearch;
     private int searchGeneration;
 
@@ -106,10 +120,6 @@ public class MainActivity extends Activity {
         configureSystemBars();
         buildUi();
         refreshStatus();
-        if (!VaultPreferences.isAppLockEnabled(this)) {
-            scheduleSearch("");
-            refreshMetrics();
-        }
     }
 
     private void configureSystemBars() {
@@ -440,11 +450,20 @@ public class MainActivity extends Activity {
         searchLp.topMargin = dp(12);
         root.addView(searchCard, searchLp);
 
-        TextView hint = text("搜索范围：最近 10,000 条留存记录 · 点击消息卡片查看完整内容", 10, COLOR_MUTED, false);
+        TextView hint = text("按需加载，每次读取 30 条；点击消息卡片查看完整内容", 10, COLOR_MUTED, false);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
         hintLp.topMargin = dp(6);
         hintLp.bottomMargin = dp(9);
         root.addView(hint, hintLp);
+
+        filterRow = new LinearLayout(this);
+        filterRow.setOrientation(LinearLayout.HORIZONTAL);
+        filterRow.setGravity(Gravity.CENTER_VERTICAL);
+        filterRow.setPadding(0, dp(2), 0, dp(8));
+        addFilterChip("全部", "all");
+        addFilterChip("普通消息", VaultRecord.MESSAGE);
+        addFilterChip("撤回提示", VaultRecord.REVOKE);
+        root.addView(filterRow, new LinearLayout.LayoutParams(-1, -2));
 
         recordList = new LinearLayout(this);
         recordList.setOrientation(LinearLayout.VERTICAL);
@@ -494,9 +513,19 @@ public class MainActivity extends Activity {
         updateStatusTile(shizukuServiceValue, "Shizuku 服务", shizukuAlive);
         updateStatusTile(shizukuPermissionValue, "Shizuku 授权", shizukuGranted);
 
-        String detail = shizukuGranted ? "Shizuku 权限检查通过。" : shizukuMessage;
-        if (!shizukuAlive) detail = "请先在 Shizuku 中启动无线调试服务，再申请授权。";
-        statusDetail.setText(detail + "\n提示：Shizuku 无线调试权限不等于 Root，也不能读取微信私有数据库。 ");
+        if (!shizukuAlive) {
+            shizukuServiceValue.setText("可选");
+            shizukuServiceValue.setTextColor(COLOR_MUTED);
+        }
+        if (!shizukuGranted) {
+            shizukuPermissionValue.setText("可选");
+            shizukuPermissionValue.setTextColor(COLOR_MUTED);
+        }
+        String detail = listenerEnabled
+                ? "通知监听已开启，消息留存正常工作。Shizuku 是可选扩展。"
+                : "请先开启 Android 通知监听权限；Shizuku 为可选功能，不影响基础通知留存。";
+        if (shizukuGranted) detail += " Shizuku 授权通过。";
+        statusDetail.setText(detail + "\n仅保存系统实际交付的通知内容，不读取微信私有数据库。");
     }
 
     private void updateStatusTile(TextView value, String label, boolean active) {
@@ -595,8 +624,6 @@ public class MainActivity extends Activity {
                         appUnlockedForSession = false;
                         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
                         toast("设备锁保护已关闭");
-                        refreshMetrics();
-                        scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
                         refreshMetrics();
                         scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
                     })
@@ -717,61 +744,155 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void scheduleSearch(String query) {
-        if (destroyed || recordList == null) return;
-        final int generation = ++searchGeneration;
-        if (pendingSearch != null) mainHandler.removeCallbacks(pendingSearch);
-        pendingSearch = () -> loadRecords(query, generation);
-        mainHandler.postDelayed(pendingSearch, 260);
+    private void addFilterChip(String label, String value) {
+        TextView chip = text(label, 11, COLOR_MUTED, true);
+        chip.setGravity(Gravity.CENTER);
+        chip.setPadding(dp(13), dp(8), dp(13), dp(8));
+        chip.setBackground(roundBackground(0xFFF1F4F8, dp(30), 0xFFE1E7EE, dp(1)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.rightMargin = dp(7);
+        filterRow.addView(chip, lp);
+        chip.setTag(value);
+        chip.setOnClickListener(view -> {
+            String next = (String) view.getTag();
+            if (!next.equals(currentTypeFilter)) {
+                currentTypeFilter = next;
+                refreshFilterChips();
+                scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+            }
+        });
+        refreshFilterChips();
     }
 
-    private void loadRecords(String query, int generation) {
-        recordCount.setText("正在检索…");
-        ioExecutor.execute(() -> {
+    private void refreshFilterChips() {
+        if (filterRow == null) return;
+        for (int i = 0; i < filterRow.getChildCount(); i++) {
+            TextView chip = (TextView) filterRow.getChildAt(i);
+            boolean selected = currentTypeFilter.equals(chip.getTag());
+            chip.setTextColor(selected ? Color.WHITE : COLOR_MUTED);
+            chip.setBackground(roundBackground(
+                    selected ? COLOR_BLUE : 0xFFF1F4F8, dp(30),
+                    selected ? COLOR_BLUE : 0xFFE1E7EE, dp(1)));
+        }
+    }
+
+    private void scheduleSearch(String query) {
+        if (destroyed || recordList == null) return;
+        currentQuery = query == null ? "" : query.trim();
+        nextBeforeTimestamp = 0L;
+        nextBeforeId = 0L;
+        displayedRecordCount = 0;
+        hasMoreRecords = false;
+        searchLoading = false;
+        final int generation = ++searchGeneration;
+
+        if (pendingSearch != null) mainHandler.removeCallbacks(pendingSearch);
+        if (activeSearchFuture != null) activeSearchFuture.cancel(true);
+        recordList.removeAllViews();
+        if (loadMoreView != null) loadMoreView.setVisibility(View.GONE);
+        recordCount.setText("等待检索…");
+        pendingSearch = () -> loadRecords(currentQuery, currentTypeFilter, 0L, 0L, generation, false);
+        mainHandler.postDelayed(pendingSearch, 220);
+    }
+
+    private void loadMoreRecords() {
+        if (destroyed || searchLoading || !hasMoreRecords) return;
+        loadRecords(currentQuery, currentTypeFilter, nextBeforeTimestamp, nextBeforeId,
+                searchGeneration, true);
+    }
+
+    private void loadRecords(String query, String typeFilter, long beforeTimestamp,
+                             long beforeId, int generation, boolean append) {
+        if (searchLoading || generation != searchGeneration) return;
+        searchLoading = true;
+        if (loadMoreView != null && loadMoreView.getParent() == recordList) {
+            loadMoreView.setText("正在加载…");
+            loadMoreView.setEnabled(false);
+        } else if (!append) {
+            recordCount.setText("正在检索…");
+        }
+
+        activeSearchFuture = searchExecutor.submit(() -> {
             List<VaultRecord> records = null;
             String errorMessage = null;
+            boolean more = false;
+            long cursorTimestamp = 0L;
+            long cursorId = 0L;
             try (VaultDb db = new VaultDb(getApplicationContext())) {
-                VaultPreferences.maybeCleanupExpired(getApplicationContext(), db, System.currentTimeMillis());
-                records = db.search(query);
+                if (!append) {
+                    VaultPreferences.maybeCleanupExpired(getApplicationContext(), db, System.currentTimeMillis());
+                }
+                records = db.searchPage(query, typeFilter, beforeTimestamp, beforeId, PAGE_SIZE + 1);
+                if (records.size() > PAGE_SIZE) {
+                    more = true;
+                    records.remove(records.size() - 1);
+                }
+                if (!records.isEmpty()) {
+                    VaultRecord last = records.get(records.size() - 1);
+                    cursorTimestamp = last.timestamp;
+                    cursorId = last.id;
+                }
+            } catch (InterruptedException cancelled) {
+                Thread.currentThread().interrupt();
+                return;
             } catch (Exception error) {
                 errorMessage = error.getMessage();
             }
+
             final List<VaultRecord> result = records;
             final String failure = errorMessage;
+            final boolean canLoadMore = more;
+            final long lastTimestamp = cursorTimestamp;
+            final long lastId = cursorId;
             mainHandler.post(() -> {
                 if (destroyed || generation != searchGeneration) return;
-                renderRecords(result, query, failure);
+                searchLoading = false;
+                nextBeforeTimestamp = lastTimestamp;
+                nextBeforeId = lastId;
+                hasMoreRecords = canLoadMore;
+                renderRecords(result, query, failure, append);
             });
         });
     }
 
-    private void renderRecords(List<VaultRecord> records, String query, String error) {
-        recordList.removeAllViews();
+    private void renderRecords(List<VaultRecord> records, String query, String error, boolean append) {
+        if (!append) recordList.removeAllViews();
+        if (loadMoreView != null && loadMoreView.getParent() == recordList) {
+            recordList.removeView(loadMoreView);
+        }
         if (error != null || records == null) {
             recordCount.setText("读取失败");
             addEmptyState("暂时无法读取记录", safe(error));
             return;
         }
 
-        int total = records.size();
-        refreshMetrics();
-        int visible = Math.min(total, MAX_VISIBLE_RECORDS);
-        recordCount.setText(query.trim().isEmpty()
-            ? total + " 条记录"
-            : total + " 条匹配记录");
-
-        if (total == 0) {
+        if (records.isEmpty() && !append) {
+            recordCount.setText("0 条记录");
             addEmptyState(query.trim().isEmpty() ? "还没有留存消息" : "没有找到匹配内容",
-                query.trim().isEmpty() ? "开启通知监听权限后，符合条件的通知会显示在这里。" : "试试其他会话名称或关键词。 ");
+                    query.trim().isEmpty() ? "开启通知监听权限后，符合条件的通知会显示在这里。" : "试试其他关键词或筛选条件。");
             return;
         }
 
-        for (int i = 0; i < visible; i++) addRecordCard(records.get(i));
-        if (total > visible) {
-            TextView more = text("为保持浏览流畅，仅显示最近 " + visible + " 条；共匹配 " + total + " 条。", 11, COLOR_MUTED, false);
-            more.setGravity(Gravity.CENTER);
-            more.setPadding(dp(8), dp(14), dp(8), dp(12));
-            recordList.addView(more);
+        for (VaultRecord record : records) addRecordCard(record);
+        displayedRecordCount += records.size();
+        recordCount.setText(displayedRecordCount + " 条" + (hasMoreRecords ? " · 还有更多" : " · 已全部显示"));
+
+        if (hasMoreRecords) {
+            if (loadMoreView == null) {
+                loadMoreView = text("加载更多记录", 12, COLOR_BLUE, true);
+                loadMoreView.setGravity(Gravity.CENTER);
+                loadMoreView.setPadding(dp(12), dp(16), dp(12), dp(16));
+                loadMoreView.setBackground(roundBackground(Color.WHITE, dp(14), 0xFFE2EAF2, dp(1)));
+                loadMoreView.setFocusable(true);
+                loadMoreView.setClickable(true);
+                loadMoreView.setOnClickListener(view -> loadMoreRecords());
+            }
+            loadMoreView.setText("加载更多记录");
+            loadMoreView.setEnabled(true);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+            lp.topMargin = dp(3);
+            lp.bottomMargin = dp(12);
+            recordList.addView(loadMoreView, lp);
         }
     }
 
@@ -1071,7 +1192,7 @@ public class MainActivity extends Activity {
         view.setText(value);
         view.setTextSize(size);
         view.setTextColor(color);
-        if (bold) view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        if (bold) view.setTypeface(MEDIUM_TYPEFACE);
         return view;
     }
 
@@ -1134,6 +1255,8 @@ public class MainActivity extends Activity {
         if (pendingSearch != null) mainHandler.removeCallbacks(pendingSearch);
         // Let queued I/O tasks finish so temporary backup passwords and buffers reach their finally blocks.
         ioExecutor.shutdown();
+        if (activeSearchFuture != null) activeSearchFuture.cancel(true);
+        searchExecutor.shutdownNow();
         Shizuku.removeRequestPermissionResultListener(permissionListener);
         super.onDestroy();
     }
