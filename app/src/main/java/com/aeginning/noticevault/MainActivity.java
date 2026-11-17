@@ -94,7 +94,11 @@ public class MainActivity extends Activity {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "NoticeVault-Search");
+        thread.setPriority(Thread.NORM_PRIORITY - 1);
+        return thread;
+    });
     private Future<?> activeSearchFuture;
     private Runnable pendingSearch;
     private int searchGeneration;
@@ -815,7 +819,10 @@ public class MainActivity extends Activity {
         recordList.removeAllViews();
         if (loadMoreView != null) loadMoreView.setVisibility(View.GONE);
         recordCount.setText("等待检索…");
-        pendingSearch = () -> loadRecords(currentQuery, currentTypeFilter, 0L, 0L, generation, false);
+        pendingSearch = () -> {
+            pendingSearch = null;
+            loadRecords(currentQuery, currentTypeFilter, 0L, 0L, generation, false);
+        };
         mainHandler.postDelayed(pendingSearch, 220);
     }
 
@@ -871,6 +878,7 @@ public class MainActivity extends Activity {
             mainHandler.post(() -> {
                 if (destroyed || generation != searchGeneration) return;
                 searchLoading = false;
+                activeSearchFuture = null;
                 nextBeforeTimestamp = lastTimestamp;
                 nextBeforeId = lastId;
                 hasMoreRecords = canLoadMore;
