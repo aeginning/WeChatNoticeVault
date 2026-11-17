@@ -47,28 +47,30 @@ public class VaultNotificationListener extends NotificationListenerService {
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (stopping || sbn == null) return;
-        String packageName = sbn.getPackageName();
-        if (!isPackageAllowed(packageName)) return;
-
-        Notification notification = sbn.getNotification();
-        if (notification == null || notification.extras == null) return;
-
-        Bundle extras = notification.extras;
-        String title = limit(cs(extras.getCharSequence(Notification.EXTRA_TITLE)), 1024);
-        String conversation = limit(cs(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)), 1024);
-        if (conversation.isEmpty()) conversation = title;
-        String body = limit(extractBody(extras), MAX_NOTIFICATION_TEXT);
-        if (body.trim().isEmpty() && title.trim().isEmpty()) return;
-
-        boolean revoke = RevokeMatcher.isRevokeNotice(title, body);
-        VaultRecord record = new VaultRecord(
-                sbn.getPostTime(), revoke ? VaultRecord.REVOKE : VaultRecord.MESSAGE,
-                conversation, title, body, packageName);
-
         try {
+            String packageName = sbn.getPackageName();
+            if (!isPackageAllowed(packageName)) return;
+
+            Notification notification = sbn.getNotification();
+            if (notification == null || notification.extras == null) return;
+
+            Bundle extras = notification.extras;
+            String title = limit(cs(extras.getCharSequence(Notification.EXTRA_TITLE)), 1024);
+            String conversation = limit(cs(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)), 1024);
+            if (conversation.isEmpty()) conversation = title;
+            String body = limit(extractBody(extras), MAX_NOTIFICATION_TEXT);
+            if (body.trim().isEmpty() && title.trim().isEmpty()) return;
+
+            boolean revoke = RevokeMatcher.isRevokeNotice(title, body);
+            VaultRecord record = new VaultRecord(
+                    sbn.getPostTime(), revoke ? VaultRecord.REVOKE : VaultRecord.MESSAGE,
+                    conversation, title, body, packageName);
+
+            // Queue rejection and malformed notification bundles are isolated to this callback.
+            // Never block the system notification thread by doing database work inline.
             ioExecutor.execute(() -> persist(record));
         } catch (RuntimeException error) {
-            if (!stopping) Log.w(TAG, "Notification persistence queue is unavailable", error);
+            if (!stopping) Log.w(TAG, "Unable to process notification payload", error);
         }
     }
 
