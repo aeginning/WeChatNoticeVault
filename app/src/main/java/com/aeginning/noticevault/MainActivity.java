@@ -163,6 +163,7 @@ public class MainActivity extends Activity {
         addSectionHeading(root, "备份与数据", "备份文件使用密码加密，请妥善保管密码");
         addActionCard(root, "⇧", "导出加密备份", "将本机留存记录导出为 .nvbk 文件", COLOR_BLUE, () -> passwordDialog(true));
         addActionCard(root, "⇩", "导入加密备份", "从已有备份恢复记录", COLOR_GREEN, () -> passwordDialog(false));
+        addActionCard(root, "↻", "整理本地数据库", "回收空闲页面，尝试减少数据库文件占用", COLOR_MUTED, this::compactStorage);
         addDangerAction(root, "清空全部记录", "仅删除本机记录，不可撤销", this::confirmClearAll);
 
         buildRecordsSection(root);
@@ -189,7 +190,7 @@ public class MainActivity extends Activity {
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView version = new TextView(this);
-        version.setText("VERSION 2.1.3");
+        version.setText("VERSION 2.1.4");
         version.setTextColor(Color.WHITE);
         version.setTextSize(10);
         version.setLetterSpacing(0.06f);
@@ -513,19 +514,20 @@ public class MainActivity extends Activity {
         updateStatusTile(shizukuServiceValue, "Shizuku 服务", shizukuAlive);
         updateStatusTile(shizukuPermissionValue, "Shizuku 授权", shizukuGranted);
 
-        if (!shizukuAlive) {
-            shizukuServiceValue.setText("可选");
-            shizukuServiceValue.setTextColor(COLOR_MUTED);
-        }
-        if (!shizukuGranted) {
-            shizukuPermissionValue.setText("可选");
-            shizukuPermissionValue.setTextColor(COLOR_MUTED);
-        }
+        if (!shizukuAlive) markOptionalStatus(shizukuServiceValue);
+        if (!shizukuGranted) markOptionalStatus(shizukuPermissionValue);
         String detail = listenerEnabled
                 ? "通知监听已开启，消息留存正常工作。Shizuku 是可选扩展。"
                 : "请先开启 Android 通知监听权限；Shizuku 为可选功能，不影响基础通知留存。";
         if (shizukuGranted) detail += " Shizuku 授权通过。";
         statusDetail.setText(detail + "\n仅保存系统实际交付的通知内容，不读取微信私有数据库。");
+    }
+
+    private void markOptionalStatus(TextView value) {
+        value.setText("可选");
+        value.setTextColor(COLOR_MUTED);
+        value.setBackground(roundBackground(0xFFF1F4F8, dp(30), 0xFFE4EAF0, dp(1)));
+        value.setPadding(dp(7), dp(4), dp(7), dp(4));
     }
 
     private void updateStatusTile(TextView value, String label, boolean active) {
@@ -723,6 +725,29 @@ public class MainActivity extends Activity {
             .setNegativeButton("取消", null)
             .setPositiveButton("确认清空", (dialog, which) -> clearAllRecords())
             .show();
+    }
+
+    private void compactStorage() {
+        toast("正在整理数据库，请保持应用运行");
+        ioExecutor.execute(() -> {
+            String result;
+            try (VaultDb db = new VaultDb(getApplicationContext())) {
+                long[] sizes = db.compactStorage();
+                result = "整理完成：数据库 " + formatBytes(sizes[0]) + " → " + formatBytes(sizes[1]);
+            } catch (Exception error) {
+                result = "整理未完成：数据库正被其他操作占用，请稍后重试";
+            }
+            final String message = result;
+            mainHandler.post(() -> {
+                if (!destroyed) toast(message);
+            });
+        });
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(java.util.Locale.ROOT, "%.1f KB", bytes / 1024.0);
+        return String.format(java.util.Locale.ROOT, "%.2f MB", bytes / (1024.0 * 1024.0));
     }
 
     private void clearAllRecords() {
