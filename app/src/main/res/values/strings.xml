@@ -1,1 +1,1 @@
-<resources><string name="app_name">微信防撤回</string></resources>
+<resources><string name="app_name">微信防撤回</string><string name="notification_listener_name">微信防撤回通知监听</string></resources>
