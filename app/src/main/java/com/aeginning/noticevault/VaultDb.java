@@ -74,7 +74,7 @@ public class VaultDb extends SQLiteOpenHelper {
                                                       long beforeTimestamp, long beforeId,
                                                       int limit) throws Exception {
         int safeLimit = Math.max(1, Math.min(limit, 100));
-        String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        String needle = query == null ? "" : query.trim();
         if (needle.length() > 128) needle = needle.substring(0, 128);
 
         StringBuilder selection = new StringBuilder();
@@ -102,11 +102,10 @@ public class VaultDb extends SQLiteOpenHelper {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Search cancelled");
                 VaultRecord record = decode(cursor.getBlob(2));
                 record.id = cursor.getLong(0);
-                if (!needle.isEmpty()) {
-                    String haystack = (record.title + " " + record.text + " " + record.conversation)
-                            .toLowerCase(Locale.ROOT);
-                    if (!haystack.contains(needle)) continue;
-                }
+                if (!needle.isEmpty()
+                        && !containsIgnoreCase(record.title, needle)
+                        && !containsIgnoreCase(record.conversation, needle)
+                        && !containsIgnoreCase(record.text, needle)) continue;
                 result.add(record);
                 if (result.size() >= safeLimit) break;
             }
@@ -119,11 +118,12 @@ public class VaultDb extends SQLiteOpenHelper {
     /** Legacy full search retained for internal compatibility; new UI must use searchPage(). */
     public synchronized List<VaultRecord> search(String query) throws Exception {
         List<VaultRecord> result = new ArrayList<>();
-        String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        String needle = query == null ? "" : query.trim();
         for (VaultRecord record : queryAll()) {
-            String haystack = (record.title + " " + record.text + " " + record.conversation)
-                    .toLowerCase(Locale.ROOT);
-            if (needle.isEmpty() || haystack.contains(needle)) result.add(record);
+            if (needle.isEmpty()
+                    || containsIgnoreCase(record.title, needle)
+                    || containsIgnoreCase(record.conversation, needle)
+                    || containsIgnoreCase(record.text, needle)) result.add(record);
         }
         return result;
     }
@@ -337,6 +337,15 @@ public class VaultDb extends SQLiteOpenHelper {
         db.execSQL("VACUUM");
         long afterBytes = appContext.getDatabasePath(DB).length();
         return new long[]{beforeBytes, afterBytes};
+    }
+
+    private static boolean containsIgnoreCase(String value, String query) {
+        if (value == null || query == null || query.isEmpty()) return true;
+        int lastStart = value.length() - query.length();
+        for (int i = 0; i <= lastStart; i++) {
+            if (value.regionMatches(true, i, query, 0, query.length())) return true;
+        }
+        return false;
     }
 
     private static void validateRecord(VaultRecord record) {
