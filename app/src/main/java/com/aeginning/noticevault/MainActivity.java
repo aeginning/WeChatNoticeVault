@@ -547,6 +547,184 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void addAdvancedFilterButton(String label, Runnable action) {
+        TextView chip = text(label, 10, COLOR_TEXT, true);
+        chip.setGravity(Gravity.CENTER);
+        chip.setPadding(dp(10), dp(7), dp(10), dp(7));
+        chip.setBackground(roundBackground(0xFFF1F4F8, dp(24), 0xFFE1E7EE, dp(1)));
+        chip.setOnClickListener(view -> action.run());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.rightMargin = dp(6);
+        advancedFilterRow.addView(chip, lp);
+    }
+
+    private void addSelectionAction(String label, Runnable action) {
+        TextView item = text(label, 10, COLOR_BLUE, true);
+        item.setGravity(Gravity.CENTER);
+        item.setPadding(dp(7), dp(8), dp(7), dp(8));
+        item.setBackground(roundBackground(0xFFF1F4F8, dp(10), 0xFFE1E7EE, dp(1)));
+        item.setOnClickListener(view -> action.run());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+        lp.setMargins(dp(2), 0, dp(2), 0);
+        selectionToolbar.addView(item, lp);
+    }
+
+    private void updateAdvancedFilterLabels() {
+        if (advancedFilterRow == null || advancedFilterRow.getChildCount() < 3) return;
+        String time = dateFilterDays == 0 ? "时间：全部"
+                : dateFilterDays == 1 ? "时间：24小时"
+                : "时间：" + dateFilterDays + "天";
+        advancedFilterRow.getChildAt(0);
+        ((TextView) advancedFilterRow.getChildAt(0)).setText(time);
+        String source = currentPackageFilter.isEmpty() ? "来源：全部"
+                : "来源：" + applicationLabel(currentPackageFilter);
+        ((TextView) advancedFilterRow.getChildAt(1)).setText(source);
+        ((TextView) advancedFilterRow.getChildAt(2)).setText(favoriteOnlyFilter ? "★ 仅收藏" : "☆ 收藏");
+        ((TextView) advancedFilterRow.getChildAt(2)).setTextColor(favoriteOnlyFilter ? 0xFFE2A400 : COLOR_TEXT);
+    }
+
+    private String applicationLabel(String packageName) {
+        try {
+            android.content.pm.ApplicationInfo info = getPackageManager().getApplicationInfo(packageName, 0);
+            CharSequence label = getPackageManager().getApplicationLabel(info);
+            return label == null ? packageName : label.toString();
+        } catch (PackageManager.NameNotFoundException ignored) {
+            return packageName;
+        }
+    }
+
+    private void showDateFilterDialog() {
+        final int[] days = new int[]{0, 1, 7, 30};
+        CharSequence[] labels = new CharSequence[]{"全部时间", "最近 24 小时", "最近 7 天", "最近 30 天"};
+        int selected = 0;
+        for (int i = 0; i < days.length; i++) if (days[i] == dateFilterDays) selected = i;
+        new AlertDialog.Builder(this).setTitle("按时间筛选")
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    dateFilterDays = days[which];
+                    updateAdvancedFilterLabels();
+                    dialog.dismiss();
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                }).setNegativeButton("取消", null).show();
+    }
+
+    private void showPackageFilterDialog() {
+        List<String> packages = new ArrayList<>(VaultPreferences.getAllowedPackages(this));
+        Collections.sort(packages);
+        CharSequence[] labels = new CharSequence[packages.size() + 1];
+        labels[0] = "全部来源";
+        int selected = currentPackageFilter.isEmpty() ? 0 : -1;
+        for (int i = 0; i < packages.size(); i++) {
+            String packageName = packages.get(i);
+            labels[i + 1] = applicationLabel(packageName);
+            if (packageName.equals(currentPackageFilter)) selected = i + 1;
+        }
+        new AlertDialog.Builder(this).setTitle("按通知来源筛选")
+                .setSingleChoiceItems(labels, Math.max(0, selected), (dialog, which) -> {
+                    currentPackageFilter = which == 0 ? "" : packages.get(which - 1);
+                    updateAdvancedFilterLabels();
+                    dialog.dismiss();
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                }).setNegativeButton("取消", null).show();
+    }
+
+    private void setSelectionMode(boolean enabled) {
+        if (selectionMode == enabled) return;
+        selectionMode = enabled;
+        selectedRecordIds.clear();
+        if (selectionToolbar != null) selectionToolbar.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        if (manageRecordsView != null) manageRecordsView.setText(enabled ? "完成" : "管理");
+        scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+    }
+
+    private void updateSelectionCount() {
+        if (selectionMode && recordCount != null) {
+            recordCount.setText(selectedRecordIds.size() + " 已选 · " + displayedRecordCount + " 已加载");
+        }
+    }
+
+    private void rerenderVisibleRecords() {
+        List<VaultRecord> snapshot = new ArrayList<>(visibleRecords);
+        displayedRecordCount = 0;
+        renderRecords(snapshot, currentQuery, null, false);
+        updateSelectionCount();
+    }
+
+    private void selectAllLoaded() {
+        for (VaultRecord record : visibleRecords) selectedRecordIds.add(record.id);
+        rerenderVisibleRecords();
+    }
+
+    private long[] selectedIdsArray() {
+        long[] ids = new long[selectedRecordIds.size()];
+        int index = 0;
+        for (Long id : selectedRecordIds) if (id != null && id > 0L) ids[index++] = id;
+        return index == ids.length ? ids : java.util.Arrays.copyOf(ids, index);
+    }
+
+    private void applySelectionFavorite(boolean favorite) {
+        long[] ids = selectedIdsArray();
+        if (ids.length == 0) { toast("请先选择记录"); return; }
+        ioExecutor.execute(() -> {
+            int changed = 0;
+            try (VaultDb db = new VaultDb(getApplicationContext())) {
+                changed = db.setFavorites(ids, favorite);
+            } catch (Exception error) {
+                final String message = "批量更新收藏失败：" + safe(error.getMessage());
+                mainHandler.post(() -> toast(message));
+                return;
+            }
+            final int count = changed;
+            mainHandler.post(() -> {
+                if (destroyed) return;
+                toast((favorite ? "已收藏 " : "已取消收藏 ") + count + " 条记录");
+                setSelectionMode(false);
+                refreshMetrics();
+            });
+        });
+    }
+
+    private void confirmDeleteSelected() {
+        long[] ids = selectedIdsArray();
+        if (ids.length == 0) { toast("请先选择记录"); return; }
+        new AlertDialog.Builder(this).setTitle("删除所选记录")
+                .setMessage("确定删除已选择的 " + ids.length + " 条记录？此操作不可撤销。建议先导出加密备份。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除", (dialog, which) -> ioExecutor.execute(() -> {
+                    int deleted = 0;
+                    try (VaultDb db = new VaultDb(getApplicationContext())) { deleted = db.deleteRecords(ids); }
+                    catch (Exception error) {
+                        final String message = "删除失败：" + safe(error.getMessage());
+                        mainHandler.post(() -> toast(message));
+                        return;
+                    }
+                    final int count = deleted;
+                    mainHandler.post(() -> {
+                        if (destroyed) return;
+                        toast("已删除 " + count + " 条记录");
+                        setSelectionMode(false);
+                        refreshMetrics();
+                    });
+                })).show();
+    }
+
+    private void setRecordFavorite(VaultRecord record, boolean favorite) {
+        if (record == null || record.id <= 0L) return;
+        ioExecutor.execute(() -> {
+            int changed = 0;
+            try (VaultDb db = new VaultDb(getApplicationContext())) { changed = db.setFavorite(record.id, favorite); }
+            catch (Exception error) {
+                final String message = "更新收藏失败：" + safe(error.getMessage());
+                mainHandler.post(() -> toast(message));
+                return;
+            }
+            if (changed > 0) record.favorite = favorite;
+            mainHandler.post(() -> {
+                if (destroyed) return;
+                toast(favorite ? "已加入收藏" : "已取消收藏");
+                scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+            });
+        });
+    }
     /**
      * Open the system notification-listener permission page.
      * Some vendor ROMs do not expose the dedicated settings activity; fall back
