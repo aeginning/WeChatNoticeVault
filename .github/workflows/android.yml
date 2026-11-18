@@ -98,6 +98,7 @@ jobs:
           set -euo pipefail
           checksum_file="$RUNNER_TEMP/WeChatNoticeVault-2.1.9-SHA256SUMS.txt"
           sha256sum app/build/outputs/apk/debug/*.apk > "$checksum_file"
+          shopt -s nullglob
           release_apks=(app/build/outputs/apk/release/*.apk)
           if (( ${#release_apks[@]} > 0 )); then
             sha256sum "${release_apks[@]}" >> "$checksum_file"
