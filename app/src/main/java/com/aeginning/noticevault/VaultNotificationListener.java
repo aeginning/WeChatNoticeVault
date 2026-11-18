@@ -1,13 +1,13 @@
 package com.aeginning.noticevault;
 
 import android.app.Notification;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcelable;
 import android.os.SystemClock;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -19,6 +19,7 @@ import java.util.concurrent.RejectedExecutionException;
 public class VaultNotificationListener extends NotificationListenerService {
     private static final String TAG = "NoticeVault";
     private static final int MAX_NOTIFICATION_TEXT = 16384;
+    private static final int MAX_MESSAGING_STYLE_MESSAGES = 8;
 
     private volatile boolean stopping;
     private VaultDb database;
@@ -111,50 +112,49 @@ public class VaultNotificationListener extends NotificationListenerService {
     }
 
     private String extractBody(Bundle extras) {
+        String messaging = extractMessagingBody(extras);
+        if (!messaging.isEmpty()) return messaging;
+
         String big = bounded(extras.getCharSequence(Notification.EXTRA_BIG_TEXT), MAX_NOTIFICATION_TEXT);
         if (!big.isEmpty()) return big;
-        String text = bounded(extras.getCharSequence(Notification.EXTRA_TEXT), MAX_NOTIFICATION_TEXT);
-        if (!text.isEmpty()) return text;
 
         CharSequence[] lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
         if (lines != null && lines.length > 0) {
-            StringBuilder builder = new StringBuilder();
+            List<String> fragments = new ArrayList<>(lines.length);
             for (CharSequence line : lines) {
-                if (line == null) continue;
-                int remaining = MAX_NOTIFICATION_TEXT - builder.length();
-                if (remaining <= 0) break;
-                if (builder.length() > 0) {
-                    builder.append('\n');
-                    remaining--;
-                }
-                if (remaining > 0) builder.append(line, 0, Math.min(line.length(), remaining));
+                if (line != null) fragments.add(bounded(line, MAX_NOTIFICATION_TEXT));
             }
-            if (builder.length() > 0) return builder.toString();
+            String joined = NotificationText.joinMessages(fragments, MAX_NOTIFICATION_TEXT);
+            if (!joined.isEmpty()) return joined;
         }
 
-        Parcelable[] messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES);
-        if (messages != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            List<Notification.MessagingStyle.Message> parsed =
-                    Notification.MessagingStyle.Message.getMessagesFromBundleArray(messages);
-            if (parsed != null) {
-                StringBuilder builder = new StringBuilder();
-                for (Notification.MessagingStyle.Message message : parsed) {
-                    if (message == null || message.getText() == null) continue;
-                    CharSequence messageText = message.getText();
-                    int remaining = MAX_NOTIFICATION_TEXT - builder.length();
-                    if (remaining <= 0) break;
-                    if (builder.length() > 0) {
-                        builder.append('\n');
-                        remaining--;
-                    }
-                    if (remaining > 0) {
-                        builder.append(messageText, 0, Math.min(messageText.length(), remaining));
-                    }
-                }
-                if (builder.length() > 0) return builder.toString();
+        String text = bounded(extras.getCharSequence(Notification.EXTRA_TEXT), MAX_NOTIFICATION_TEXT);
+        if (!text.isEmpty()) return text;
+        return bounded(extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT), MAX_NOTIFICATION_TEXT);
+    }
+
+    private String extractMessagingBody(Bundle extras) {
+        Parcelable[] bundles = extras.getParcelableArray(Notification.EXTRA_MESSAGES);
+        if (bundles == null || bundles.length == 0) return "";
+        try {
+            List<Notification.MessagingStyle.Message> messages =
+                    Notification.MessagingStyle.Message.getMessagesFromBundleArray(bundles);
+            if (messages == null || messages.isEmpty()) return "";
+            int first = Math.max(0, messages.size() - MAX_MESSAGING_STYLE_MESSAGES);
+            List<String> fragments = new ArrayList<>(Math.min(messages.size(), MAX_MESSAGING_STYLE_MESSAGES));
+            for (int i = first; i < messages.size(); i++) {
+                Notification.MessagingStyle.Message message = messages.get(i);
+                if (message == null || message.getText() == null) continue;
+                String body = bounded(message.getText(), MAX_NOTIFICATION_TEXT);
+                if (body.isEmpty()) continue;
+                String sender = bounded(message.getSender(), 128);
+                fragments.add(sender.isEmpty() ? body : sender + "：" + body);
             }
+            return NotificationText.joinMessages(fragments, MAX_NOTIFICATION_TEXT);
+        } catch (RuntimeException malformedBundle) {
+            Log.w(TAG, "Unable to parse MessagingStyle notification");
+            return "";
         }
-        return "";
     }
 
     /** Truncate the CharSequence before converting it to String to bound transient allocations. */

@@ -24,6 +24,8 @@ public class VaultDb extends SQLiteOpenHelper {
     private static final String DB = "noticevault.db";
     private static final int VERSION = 2;
     private static final int MAX_RECORDS = 10000;
+    private static final int MAX_REVOKE_CANDIDATES = 30;
+    private static final int MAX_REVOKE_SCAN = 500;
     private final Context appContext;
 
     public VaultDb(Context context) {
@@ -221,19 +223,19 @@ public class VaultDb extends SQLiteOpenHelper {
             }
 
             if (VaultRecord.REVOKE.equals(record.type)) {
-                long minTimestamp = record.timestamp - 5L * 60L * 1000L;
+                long minTimestamp = Math.max(0L,
+                        record.timestamp - RevokeMatcher.DEFAULT_WINDOW_MS);
                 Cursor cursor = db.query("records", new String[]{"_id", "payload"},
                         "type=? AND ts BETWEEN ? AND ?",
-                        new String[]{VaultRecord.MESSAGE, String.valueOf(minTimestamp), String.valueOf(record.timestamp)},
-                        null, null, "ts DESC, _id DESC", String.valueOf(MAX_RECORDS));
+                        new String[]{VaultRecord.MESSAGE, String.valueOf(minTimestamp),
+                                String.valueOf(record.timestamp)},
+                        null, null, "ts DESC, _id DESC", String.valueOf(MAX_REVOKE_SCAN));
                 try {
-                    while (cursor.moveToNext()) {
+                    while (cursor.moveToNext()
+                            && record.candidates.length() < MAX_REVOKE_CANDIDATES) {
                         VaultRecord previous = decode(cursor.getBlob(1));
                         previous.id = cursor.getLong(0);
-                        if (RevokeMatcher.sameConversation(previous.conversation, record.conversation)) {
-                            if (record.candidates.length() < 1000) record.candidates.put(previous.id);
-                            else break;
-                        }
+                        if (RevokeMatcher.isCandidate(previous, record)) record.candidates.put(previous.id);
                     }
                 } finally {
                     cursor.close();
@@ -246,6 +248,28 @@ public class VaultDb extends SQLiteOpenHelper {
         } finally {
             db.endTransaction();
         }
+    }
+
+    /** Resolves only valid encrypted references; does not mutate any stored record. */
+    public synchronized List<VaultRecord> findRevokeCandidates(VaultRecord revokeRecord) throws Exception {
+        List<VaultRecord> result = new ArrayList<>();
+        if (revokeRecord == null || !VaultRecord.REVOKE.equals(revokeRecord.type)
+                || revokeRecord.candidates == null) return result;
+        java.util.HashSet<Long> seen = new java.util.HashSet<>();
+        SQLiteDatabase db = getReadableDatabase();
+        int count = Math.min(revokeRecord.candidates.length(), MAX_REVOKE_CANDIDATES);
+        for (int i = 0; i < count; i++) {
+            long id = revokeRecord.candidates.optLong(i, -1L);
+            if (id <= 0L || !seen.add(id)) continue;
+            try (Cursor cursor = db.query("records", new String[]{"_id", "payload"},
+                    "_id=?", new String[]{String.valueOf(id)}, null, null, null, "1")) {
+                if (!cursor.moveToFirst()) continue;
+                VaultRecord candidate = decode(cursor.getBlob(1));
+                candidate.id = cursor.getLong(0);
+                if (RevokeMatcher.isCandidate(candidate, revokeRecord)) result.add(candidate);
+            }
+        }
+        return result;
     }
 
     private boolean containsDuplicate(VaultRecord record, SQLiteDatabase db) throws Exception {
