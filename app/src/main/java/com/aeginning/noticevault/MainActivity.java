@@ -196,10 +196,13 @@ public class MainActivity extends Activity {
         buildHero(root);
         buildStatusCard(root);
         buildMetricsCard(root);
+        // Keep recent retained messages above secondary configuration actions.
+        buildRecordsSection(root);
+
         addSectionHeading(root, "权限与运行", "完成基础授权，让消息留存持续运行");
         addActionCard(root, "◉", "开启通知监听权限", "允许系统将可见通知交给本应用处理", COLOR_BLUE,
             this::openNotificationListenerSettings);
-        addActionCard(root, "⌘", "检查 / 申请 Shizuku 权限", "无线调试启动 · 无需 Root", COLOR_GREEN, this::requestShizuku);
+        addActionCard(root, "⌘", "检查 / 申请 Shizuku（可选）", "可选授权，不影响基础通知留存", COLOR_GREEN, this::requestShizuku);
         addActionCard(root, "⚙", "电池优化设置", "检查系统后台限制，减少进程被停止的情况", COLOR_MUTED, this::openBatterySettings);
 
         addSectionHeading(root, "隐私与通知来源", "选择保存哪些应用的通知，并控制本地数据保留时间");
@@ -218,7 +221,6 @@ public class MainActivity extends Activity {
         addActionCard(root, "↻", "整理本地数据库", "回收空闲页面，尝试减少数据库文件占用", COLOR_MUTED, this::compactStorage);
         addDangerAction(root, "清空全部记录", "仅删除本机记录，不可撤销", this::confirmClearAll);
 
-        buildRecordsSection(root);
         setContentView(scroll);
     }
 
@@ -242,7 +244,7 @@ public class MainActivity extends Activity {
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView version = new TextView(this);
-        version.setText("VERSION 2.1.9");
+        version.setText("VERSION 2.2.0");
         version.setTextColor(Color.WHITE);
         version.setTextSize(10);
         version.setLetterSpacing(0.06f);
@@ -281,7 +283,7 @@ public class MainActivity extends Activity {
 
         TextView heading = text("运行状态", 16, COLOR_TEXT, true);
         card.addView(heading);
-        TextView hint = text("授权状态会在返回应用时自动刷新", 11, COLOR_MUTED, false);
+        TextView hint = text("通知监听是核心权限；Shizuku 为可选状态辅助，不影响基础留存", 11, COLOR_MUTED, false);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
         hintLp.topMargin = dp(3);
         card.addView(hint, hintLp);
@@ -1237,7 +1239,7 @@ public class MainActivity extends Activity {
         }
 
         if (!hidePreview && revoke && record.candidates != null && record.candidates.length() > 0) {
-            TextView candidates = text("关联候选记录 ID：" + record.candidates, 10, COLOR_RED, false);
+            TextView candidates = text("撤回前候选消息：" + record.candidates.length() + " 条 · 点击查看内容", 10, COLOR_RED, false);
             LinearLayout.LayoutParams candidateLp = new LinearLayout.LayoutParams(-1, -2);
             candidateLp.topMargin = dp(7);
             card.addView(candidates, candidateLp);
@@ -1249,29 +1251,78 @@ public class MainActivity extends Activity {
     }
 
     private void showRecordDetails(VaultRecord record) {
-        String time = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", record.timestamp).toString();
-        String content = "时间：" + time + "\n应用：" + safe(record.packageName)
-                + "\n会话：" + safe(record.conversation)
-                + "\n标题：" + safe(record.title)
-                + "\n\n" + safe(record.text);
-        TextView detail = text(content, 14, COLOR_TEXT, false);
+        boolean revoke = VaultRecord.REVOKE.equals(record.type);
+        TextView detail = text(buildRecordDetailText(record, null, revoke, false), 14, COLOR_TEXT, false);
         detail.setTextIsSelectable(true);
         detail.setPadding(dp(18), dp(14), dp(18), dp(14));
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.addView(detail, new ScrollView.LayoutParams(-1, -2));
-        new AlertDialog.Builder(this)
-                .setTitle(VaultRecord.REVOKE.equals(record.type) ? "撤回通知详情" : "消息详情")
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(revoke ? "撤回通知与候选消息" : "消息详情")
                 .setView(scroll)
-                .setNeutralButton("复制内容", (dialog, which) -> {
-                    ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                    if (clipboard != null) {
-                        clipboard.setPrimaryClip(ClipData.newPlainText("NoticeVault message", content));
-                        toast("消息内容已复制");
-                    }
-                })
+                .setNeutralButton("复制内容", null)
                 .setPositiveButton("关闭", null)
-                .show();
+                .create();
+        dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("NoticeVault message", detail.getText().toString()));
+                toast("消息详情已复制");
+            }
+        });
+
+        if (!revoke || record.candidates == null || record.candidates.length() == 0) return;
+        try {
+            ioExecutor.execute(() -> {
+                List<VaultRecord> candidates = Collections.emptyList();
+                boolean failed = false;
+                try (VaultDb db = new VaultDb(getApplicationContext())) {
+                    candidates = db.findRevokeCandidates(record);
+                } catch (Exception error) {
+                    failed = true;
+                }
+                final List<VaultRecord> loaded = candidates;
+                final boolean loadFailed = failed;
+                mainHandler.post(() -> {
+                    if (destroyed || !dialog.isShowing()) return;
+                    detail.setText(buildRecordDetailText(record, loaded, false, loadFailed));
+                });
+            });
+        } catch (RuntimeException rejected) {
+            detail.setText(buildRecordDetailText(record, null, false, true));
+        }
+    }
+
+    private String buildRecordDetailText(VaultRecord record, List<VaultRecord> candidates,
+                                         boolean loading, boolean failed) {
+        String time = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", record.timestamp).toString();
+        StringBuilder content = new StringBuilder();
+        content.append("时间：").append(time)
+                .append("\n应用：").append(safe(record.packageName))
+                .append("\n会话：").append(safe(record.conversation))
+                .append("\n标题：").append(safe(record.title))
+                .append("\n\n").append(safe(record.text));
+        if (VaultRecord.REVOKE.equals(record.type)) {
+            content.append("\n\n撤回候选说明\n")
+                    .append("仅关联同一应用、同一会话、撤回通知前 5 分钟内的消息；")
+                    .append("这些是时间与会话匹配结果，不代表微信确认的实际撤回对象。");
+            if (loading) content.append("\n\n正在读取关联候选消息…");
+            else if (failed) content.append("\n\n候选消息读取失败；原始留存记录未被修改。");
+            else if (candidates == null || candidates.isEmpty()) content.append("\n\n没有找到仍存在且满足关联条件的候选消息。");
+            else {
+                for (int i = 0; i < candidates.size(); i++) {
+                    VaultRecord candidate = candidates.get(i);
+                    String candidateTime = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", candidate.timestamp).toString();
+                    content.append("\n\n候选 ").append(i + 1).append(" · ").append(candidateTime);
+                    if (!safe(candidate.title).trim().isEmpty()) content.append("\n标题：").append(safe(candidate.title));
+                    content.append("\n内容：").append(safe(candidate.text).isEmpty() ? "（通知未提供正文）" : safe(candidate.text));
+                }
+            }
+        }
+        return content.toString();
     }
 
     private void addEmptyState(String title, String message) {
