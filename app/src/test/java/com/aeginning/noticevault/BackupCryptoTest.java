@@ -41,4 +41,26 @@ public class BackupCryptoTest {
     public void rejectsShortPasswordWhenDecrypting() throws Exception {
         BackupCrypto.decrypt(new byte[0], "123".toCharArray());
     }
+
+    @Test
+    public void usesFreshRandomSaltAndNonceForEachBackup() throws Exception {
+        byte[] plain = "same backup content".getBytes(StandardCharsets.UTF_8);
+        byte[] first = BackupCrypto.encrypt(plain, "strong-password".toCharArray());
+        byte[] second = BackupCrypto.encrypt(plain, "strong-password".toCharArray());
+        assertFalse(java.util.Arrays.equals(first, second));
+        assertArrayEquals(plain, BackupCrypto.decrypt(first, "strong-password".toCharArray()));
+        assertArrayEquals(plain, BackupCrypto.decrypt(second, "strong-password".toCharArray()));
+    }
+
+    @Test
+    public void rejectsUnknownBackupMagicHeader() throws Exception {
+        byte[] encrypted = BackupCrypto.encrypt("data".getBytes(StandardCharsets.UTF_8), "strong-password".toCharArray());
+        encrypted[0] ^= 0x01;
+        try {
+            BackupCrypto.decrypt(encrypted, "strong-password".toCharArray());
+            fail("unknown backup format must be rejected");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("格式"));
+        }
+    }
 }

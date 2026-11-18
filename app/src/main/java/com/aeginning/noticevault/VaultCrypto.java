@@ -23,10 +23,24 @@ public final class VaultCrypto {
 
     private VaultCrypto() { }
 
-    private static SecretKey key() throws Exception {
+    private static SecretKey key(boolean createIfMissing) throws Exception {
         KeyStore keyStore = KeyStore.getInstance(STORE);
         keyStore.load(null);
-        if (keyStore.containsAlias(ALIAS)) return (SecretKey) keyStore.getKey(ALIAS, null);
+        if (keyStore.containsAlias(ALIAS)) {
+            try {
+                SecretKey existing = (SecretKey) keyStore.getKey(ALIAS, null);
+                if (existing != null) return existing;
+            } catch (Exception error) {
+                throw new KeyUnavailableException(
+                        "本地加密密钥无法读取；为保护旧记录，应用不会自动替换密钥。", error);
+            }
+            throw new KeyUnavailableException(
+                    "本地加密密钥不存在或不可用；为保护旧记录，应用不会自动替换密钥。");
+        }
+        if (!createIfMissing) {
+            throw new KeyUnavailableException(
+                    "本地加密密钥缺失；已阻止自动创建新密钥，以免旧记录永久无法解密。");
+        }
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, STORE);
         generator.init(new KeyGenParameterSpec.Builder(ALIAS,
                 KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
@@ -38,7 +52,25 @@ public final class VaultCrypto {
         return generator.generateKey();
     }
 
-    public static byte[] encrypt(byte[] plain) throws Exception {
+    /** Returns whether the existing alias is present without creating or replacing a key. */
+    public static boolean hasKeyAlias() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance(STORE);
+        keyStore.load(null);
+        return keyStore.containsAlias(ALIAS);
+    }
+
+    public static final class KeyUnavailableException extends Exception {
+        public KeyUnavailableException(String message) {
+            super(message);
+        }
+
+        public KeyUnavailableException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    public static byte[] encrypt(byte[] plain, boolean allowKeyCreation) throws Exception {
+        if (plain == null) throw new IllegalArgumentException("Plaintext cannot be null");
         byte[] compressed = PayloadCompression.compress(plain);
         boolean useCompression = compressed.length < plain.length;
         byte[] input = useCompression ? compressed : plain;
@@ -46,7 +78,12 @@ public final class VaultCrypto {
         byte[] encrypted = null;
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.ENCRYPT_MODE, key());
+            try {
+                cipher.init(Cipher.ENCRYPT_MODE, key(allowKeyCreation));
+            } catch (java.security.InvalidKeyException error) {
+                throw new KeyUnavailableException(
+                        "本地加密密钥不可用；应用已拒绝替换密钥。", error);
+            }
             nonce = cipher.getIV();
             encrypted = cipher.doFinal(input);
             int header = nonce.length | (useCompression ? COMPRESSED_FLAG : 0);
@@ -79,7 +116,12 @@ public final class VaultCrypto {
         buffer.get(encrypted);
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+            try {
+                cipher.init(Cipher.DECRYPT_MODE, key(false), new GCMParameterSpec(128, nonce));
+            } catch (java.security.InvalidKeyException error) {
+                throw new KeyUnavailableException(
+                        "本地加密密钥不可用；旧记录保持原样，未创建替代密钥。", error);
+            }
             decrypted = cipher.doFinal(encrypted);
             if (!compressed) return decrypted;
 

@@ -22,7 +22,7 @@ import org.json.JSONObject;
  */
 public class VaultDb extends SQLiteOpenHelper {
     private static final String DB = "noticevault.db";
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
     private static final int MAX_RECORDS = 10000;
     private final Context appContext;
 
@@ -37,11 +37,15 @@ public class VaultDb extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE records (_id INTEGER PRIMARY KEY AUTOINCREMENT, "
                 + "ts INTEGER NOT NULL, type TEXT NOT NULL, payload BLOB NOT NULL)");
         db.execSQL("CREATE INDEX idx_records_ts ON records(ts DESC)");
+        db.execSQL("CREATE INDEX idx_records_type_ts ON records(type, ts DESC, _id DESC)");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // Version 1 schema is intentionally retained to avoid destructive upgrades.
+        // Version 2 adds a non-destructive composite index; existing rows and ciphertext are untouched.
+        if (oldVersion < 2) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_records_type_ts ON records(type, ts DESC, _id DESC)");
+        }
     }
 
     public synchronized long insert(VaultRecord record) throws Exception {
@@ -49,12 +53,18 @@ public class VaultDb extends SQLiteOpenHelper {
         byte[] plain = record.toJson().toString().getBytes(StandardCharsets.UTF_8);
         byte[] encrypted = null;
         try {
-            encrypted = VaultCrypto.encrypt(plain);
+            SQLiteDatabase db = getWritableDatabase();
+            boolean allowKeyCreation;
+            try (Cursor existing = db.rawQuery("SELECT 1 FROM records LIMIT 1", null)) {
+                allowKeyCreation = !existing.moveToFirst();
+            }
+            // A missing Keystore alias may be recreated only for a truly empty vault.
+            encrypted = VaultCrypto.encrypt(plain, allowKeyCreation);
             ContentValues values = new ContentValues();
             values.put("ts", record.timestamp);
             values.put("type", record.type);
             values.put("payload", encrypted);
-            return getWritableDatabase().insertOrThrow("records", null, values);
+            return db.insertOrThrow("records", null, values);
         } finally {
             java.util.Arrays.fill(plain, (byte) 0);
             if (encrypted != null) java.util.Arrays.fill(encrypted, (byte) 0);
@@ -156,6 +166,21 @@ public class VaultDb extends SQLiteOpenHelper {
 
     public synchronized long count() {
         return DatabaseUtils.longForQuery(getReadableDatabase(), "SELECT COUNT(*) FROM records", null);
+    }
+
+    /** Read-only SQLite structural check. It does not decrypt payloads or modify records. */
+    public synchronized String verifyIntegrity() {
+        try (Cursor cursor = getReadableDatabase().rawQuery("PRAGMA quick_check(1)", null)) {
+            return cursor.moveToFirst() ? cursor.getString(0) : "no_result";
+        }
+    }
+
+    /** Database, WAL and shared-memory bytes currently present on disk. */
+    public synchronized long storageBytes() {
+        java.io.File databaseFile = appContext.getDatabasePath(DB);
+        java.io.File walFile = new java.io.File(databaseFile.getPath() + "-wal");
+        java.io.File shmFile = new java.io.File(databaseFile.getPath() + "-shm");
+        return databaseFile.length() + walFile.length() + shmFile.length();
     }
 
     public synchronized long countSince(long timestamp) {
@@ -293,7 +318,7 @@ public class VaultDb extends SQLiteOpenHelper {
         byte[] plain = record.toJson().toString().getBytes(StandardCharsets.UTF_8);
         byte[] encrypted = null;
         try {
-            encrypted = VaultCrypto.encrypt(plain);
+            encrypted = VaultCrypto.encrypt(plain, false);
             ContentValues values = new ContentValues();
             values.put("payload", encrypted);
             db.update("records", values, "_id=?", new String[]{String.valueOf(record.id)});

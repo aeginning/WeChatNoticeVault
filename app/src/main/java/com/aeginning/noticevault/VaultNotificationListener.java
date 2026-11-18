@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
 
 /** Captures only content exposed by Android's notification API, never private app storage. */
 public class VaultNotificationListener extends NotificationListenerService {
@@ -68,7 +69,13 @@ public class VaultNotificationListener extends NotificationListenerService {
 
             // Queue rejection and malformed notification bundles are isolated to this callback.
             // Never block the system notification thread by doing database work inline.
-            ioExecutor.execute(() -> persist(record));
+            try {
+                ioExecutor.execute(() -> persist(record));
+            } catch (RejectedExecutionException overflow) {
+                VaultPreferences.recordDroppedNotification(getApplicationContext());
+                // Do not log notification contents; expose only an aggregate drop counter.
+                Log.w(TAG, "Notification queue full; a notification could not be queued");
+            }
         } catch (RuntimeException error) {
             if (!stopping) Log.w(TAG, "Unable to process notification payload", error);
         }
@@ -96,6 +103,8 @@ public class VaultNotificationListener extends NotificationListenerService {
             VaultPreferences.maybeCleanupExpired(getApplicationContext(), database, System.currentTimeMillis());
             long id = database.saveWithRevokeLink(record);
             Log.i(TAG, id > 0L ? "Notification saved" : "Duplicate notification ignored");
+        } catch (VaultCrypto.KeyUnavailableException error) {
+            Log.e(TAG, "Local encryption key unavailable; refusing to replace it", error);
         } catch (Exception error) {
             Log.e(TAG, "Unable to persist notification record", error);
         }
