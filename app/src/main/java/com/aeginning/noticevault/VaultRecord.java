@@ -16,6 +16,8 @@ public class VaultRecord {
     public String text;
     public String packageName;
     public JSONArray candidates = new JSONArray();
+    /** Stored inside the encrypted payload; absent in older records defaults to false. */
+    public boolean favorite;
 
     public VaultRecord(long timestamp, String type, String conversation, String title,
                        String text, String packageName) {
@@ -37,6 +39,7 @@ public class VaultRecord {
         object.put("text", text);
         object.put("package", packageName);
         object.put("candidates", candidates == null ? new JSONArray() : candidates);
+        object.put("favorite", favorite);
         return object;
     }
 
@@ -49,6 +52,7 @@ public class VaultRecord {
         record.id = object.optLong("id", -1L);
         JSONArray candidateArray = object.optJSONArray("candidates");
         record.candidates = candidateArray == null ? new JSONArray() : candidateArray;
+        record.favorite = object.optBoolean("favorite", false);
         return record;
     }
 }

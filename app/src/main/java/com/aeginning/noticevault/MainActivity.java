@@ -39,6 +39,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.concurrent.ExecutorService;
@@ -66,6 +68,11 @@ public class MainActivity extends Activity {
     private int COLOR_LOAD_BORDER, COLOR_MESSAGE_BG, COLOR_EMPTY_ICON;
 
     private LinearLayout recordList;
+    private LinearLayout selectionToolbar;
+    private TextView selectionSummary;
+    private TextView selectionDeleteAction;
+    private TextView backupReminderBanner;
+    private TextView backupReminderSettingsValue;
     private TextView recordCount;
     private EditText searchInput;
     private TextView notificationValue;
@@ -95,6 +102,10 @@ public class MainActivity extends Activity {
     private int displayedRecordCount;
     private boolean hasMoreRecords;
     private boolean searchLoading;
+    private boolean selectionMode;
+    private final Set<Long> selectedRecordIds = new HashSet<>();
+    private final List<VaultRecord> visibleRecords = new ArrayList<>();
+    private final Map<Long, View> recordCardViews = new HashMap<>();
 
     private static final Typeface MEDIUM_TYPEFACE = Typeface.create("sans-serif-medium", Typeface.NORMAL);
 
@@ -196,6 +207,7 @@ public class MainActivity extends Activity {
         buildHero(root);
         buildStatusCard(root);
         buildMetricsCard(root);
+        buildBackupReminderBanner(root);
         // Keep recent retained messages above secondary configuration actions.
         buildRecordsSection(root);
 
@@ -217,6 +229,7 @@ public class MainActivity extends Activity {
         addSectionHeading(root, "备份与数据", "备份文件使用密码加密，请妥善保管密码");
         addActionCard(root, "⇧", "导出加密备份", "将本机留存记录导出为 .nvbk 文件", COLOR_BLUE, () -> passwordDialog(true));
         addActionCard(root, "⇩", "导入加密备份", "从已有备份恢复记录", COLOR_GREEN, () -> passwordDialog(false));
+        addActionCard(root, "◷", "自动备份提醒", backupReminderLabel(), COLOR_MUTED, this::showBackupReminderDialog);
         addActionCard(root, "✓", "检查本地数据完整性", "只读检查 SQLite 结构、密钥别名和存储占用", COLOR_GREEN, this::checkDatabaseHealth);
         addActionCard(root, "↻", "整理本地数据库", "回收空闲页面，尝试减少数据库文件占用", COLOR_MUTED, this::compactStorage);
         addDangerAction(root, "清空全部记录", "仅删除本机记录，不可撤销", this::confirmClearAll);
@@ -244,7 +257,7 @@ public class MainActivity extends Activity {
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView version = new TextView(this);
-        version.setText("VERSION 2.2.0");
+        version.setText("VERSION 2.3.0");
         version.setTextColor(Color.WHITE);
         version.setTextSize(10);
         version.setLetterSpacing(0.06f);
@@ -313,6 +326,97 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
         cardLp.bottomMargin = dp(22);
         root.addView(card, cardLp);
+    }
+
+    private void buildBackupReminderBanner(LinearLayout root) {
+        backupReminderBanner = text("", 12, COLOR_RED, true);
+        backupReminderBanner.setPadding(dp(14), dp(12), dp(14), dp(12));
+        backupReminderBanner.setBackground(roundBackground(COLOR_DANGER_BG, dp(14), COLOR_DANGER_BORDER, dp(1)));
+        backupReminderBanner.setClickable(true);
+        backupReminderBanner.setFocusable(true);
+        backupReminderBanner.setOnClickListener(view -> passwordDialog(true));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.bottomMargin = dp(14);
+        root.addView(backupReminderBanner, lp);
+        refreshBackupReminderBanner();
+    }
+
+    private void refreshBackupReminderBanner() {
+        if (backupReminderSettingsValue != null) {
+            backupReminderSettingsValue.setText(backupReminderLabel());
+        }
+        if (backupReminderBanner == null) return;
+        if (!VaultPreferences.isBackupReminderDue(this, System.currentTimeMillis())) {
+            backupReminderBanner.setVisibility(View.GONE);
+            return;
+        }
+        long last = VaultPreferences.getLastSuccessfulBackup(this);
+        int days = VaultPreferences.getBackupReminderDays(this);
+        String message = last <= 0L
+                ? "尚未完成成功备份 · 已开启每 " + days + " 天提醒，建议现在创建加密备份"
+                : "备份提醒 · 距离上次成功备份已 "
+                    + Math.max(0L, (System.currentTimeMillis() - last) / 86400000L)
+                    + " 天，点击立即导出加密备份";
+        backupReminderBanner.setText(message);
+        backupReminderBanner.setVisibility(View.VISIBLE);
+    }
+
+    private String backupReminderLabel() {
+        int days = VaultPreferences.getBackupReminderDays(this);
+        if (days == 0) return "未开启 · 可设置 1–365 天的提醒周期";
+        long last = VaultPreferences.getLastSuccessfulBackup(this);
+        if (last <= 0L) return "每 " + days + " 天提醒 · 尚无成功备份记录";
+        String date = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm", last).toString();
+        return "每 " + days + " 天提醒 · 上次成功备份 " + date;
+    }
+
+    private void showBackupReminderDialog() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(2);
+        input.setHint("输入 1–365 天");
+        int current = VaultPreferences.getBackupReminderDays(this);
+        input.setText(String.valueOf(current == 0 ? 7 : current));
+        input.setSelection(input.length());
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setPadding(dp(20), dp(4), dp(20), 0);
+        wrapper.addView(input, new LinearLayout.LayoutParams(-1, -2));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("自动备份提醒")
+                .setMessage("设置距离上次成功导出加密备份的间隔。提醒会在你打开应用时显示，不会在后台弹出系统通知。")
+                .setView(wrapper)
+                .setNegativeButton("取消", null)
+                .setNeutralButton("关闭提醒", null)
+                .setPositiveButton("保存", null)
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
+                VaultPreferences.setBackupReminderDays(this, 0);
+                refreshBackupReminderBanner();
+                toast("自动备份提醒已关闭");
+                dialog.dismiss();
+            });
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                String value = input.getText().toString().trim();
+                int days;
+                try {
+                    days = Integer.parseInt(value);
+                } catch (NumberFormatException error) {
+                    toast("请输入 1–365 之间的整数天数");
+                    return;
+                }
+                if (days < 1 || days > 365) {
+                    toast("提醒周期必须为 1–365 天");
+                    return;
+                }
+                VaultPreferences.setBackupReminderDays(this, days);
+                refreshBackupReminderBanner();
+                toast("已设置每 " + days + " 天进行备份提醒");
+                dialog.dismiss();
+            });
+        });
+        dialog.show();
     }
 
     private void buildMetricsCard(LinearLayout root) {
@@ -437,6 +541,7 @@ public class MainActivity extends Activity {
         card.addView(labels, labelsLp);
         labels.addView(text(title, 14, COLOR_TEXT, true));
         TextView sub = text(subtitle, 11, COLOR_MUTED, false);
+        if ("自动备份提醒".equals(title)) backupReminderSettingsValue = sub;
         sub.setMaxLines(2);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
         subLp.topMargin = dp(4);
@@ -504,7 +609,7 @@ public class MainActivity extends Activity {
         searchLp.topMargin = dp(12);
         root.addView(searchCard, searchLp);
 
-        TextView hint = text("按需加载，每次读取 30 条；点击消息卡片查看完整内容", 10, COLOR_MUTED, false);
+        TextView hint = text("每页 30 条 · 点击查看详情 · 长按消息进入多选 · 星标收藏重要消息", 10, COLOR_MUTED, false);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
         hintLp.topMargin = dp(6);
         hintLp.bottomMargin = dp(9);
@@ -517,6 +622,7 @@ public class MainActivity extends Activity {
         addFilterChip("全部", "all");
         addFilterChip("普通消息", VaultRecord.MESSAGE);
         addFilterChip("撤回提示", VaultRecord.REVOKE);
+        addFilterChip("收藏", "favorite");
         root.addView(filterRow, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout advancedFilters = new LinearLayout(this);
@@ -531,6 +637,25 @@ public class MainActivity extends Activity {
         advancedFilters.addView(dateFilterView, new LinearLayout.LayoutParams(0, -2, 1));
         root.addView(advancedFilters, new LinearLayout.LayoutParams(-1, -2));
         updateAdvancedFilterLabels();
+
+        selectionToolbar = new LinearLayout(this);
+        selectionToolbar.setOrientation(LinearLayout.HORIZONTAL);
+        selectionToolbar.setGravity(Gravity.CENTER_VERTICAL);
+        selectionToolbar.setPadding(0, 0, 0, dp(8));
+        selectionSummary = text("已选择 0 条", 11, COLOR_MUTED, true);
+        selectionToolbar.addView(selectionSummary, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView selectAll = createFilterAction("全选已加载", this::selectAllLoadedRecords);
+        selectionToolbar.addView(selectAll, new LinearLayout.LayoutParams(-2, -2));
+        selectionDeleteAction = createFilterAction("删除 (0)", this::confirmDeleteSelectedRecords);
+        LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(-2, -2);
+        deleteLp.leftMargin = dp(5);
+        selectionToolbar.addView(selectionDeleteAction, deleteLp);
+        TextView exitSelection = createFilterAction("退出", this::exitSelectionMode);
+        LinearLayout.LayoutParams exitLp = new LinearLayout.LayoutParams(-2, -2);
+        exitLp.leftMargin = dp(5);
+        selectionToolbar.addView(exitSelection, exitLp);
+        selectionToolbar.setVisibility(View.GONE);
+        root.addView(selectionToolbar, new LinearLayout.LayoutParams(-1, -2));
 
         recordList = new LinearLayout(this);
         recordList.setOrientation(LinearLayout.VERTICAL);
@@ -1021,6 +1146,149 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void enterSelectionMode(long recordId) {
+        if (recordId <= 0L) return;
+        selectionMode = true;
+        toggleRecordSelection(recordId);
+    }
+
+    private void toggleRecordSelection(long recordId) {
+        if (recordId <= 0L) return;
+        if (selectedRecordIds.contains(recordId)) {
+            selectedRecordIds.remove(recordId);
+        } else {
+            if (selectedRecordIds.size() >= 100) {
+                toast("一次最多选择 100 条记录，请分批删除");
+                return;
+            }
+            selectedRecordIds.add(recordId);
+        }
+        refreshSelectionToolbar();
+        refreshRecordCardStyles();
+    }
+
+    private void selectAllLoadedRecords() {
+        selectionMode = true;
+        for (VaultRecord record : visibleRecords) {
+            if (record.id > 0L && selectedRecordIds.size() < 100) selectedRecordIds.add(record.id);
+        }
+        refreshSelectionToolbar();
+        refreshRecordCardStyles();
+        if (visibleRecords.size() > 100) toast("当前已加载超过 100 条，仅选择前 100 条");
+    }
+
+    private void exitSelectionMode() {
+        selectionMode = false;
+        selectedRecordIds.clear();
+        refreshSelectionToolbar();
+        refreshRecordCardStyles();
+    }
+
+    private void refreshSelectionToolbar() {
+        if (selectionToolbar == null) return;
+        selectionToolbar.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
+        if (selectionSummary != null) selectionSummary.setText("已选择 " + selectedRecordIds.size() + " 条");
+        if (selectionDeleteAction != null) {
+            selectionDeleteAction.setText("删除 (" + selectedRecordIds.size() + ")");
+            selectionDeleteAction.setEnabled(!selectedRecordIds.isEmpty());
+            selectionDeleteAction.setAlpha(selectedRecordIds.isEmpty() ? 0.45f : 1f);
+        }
+    }
+
+    private void refreshRecordCardStyles() {
+        for (Map.Entry<Long, View> entry : recordCardViews.entrySet()) {
+            boolean selected = selectedRecordIds.contains(entry.getKey());
+            entry.getValue().setBackground(roundBackground(
+                    selected ? COLOR_TILE_BG : COLOR_SURFACE, dp(16),
+                    selected ? COLOR_BLUE : COLOR_BORDER, selected ? dp(2) : dp(1)));
+        }
+    }
+
+    private void confirmDeleteSelectedRecords() {
+        if (selectedRecordIds.isEmpty()) {
+            toast("请先长按消息并选择要删除的记录");
+            return;
+        }
+        int count = selectedRecordIds.size();
+        new AlertDialog.Builder(this)
+                .setTitle("确认批量删除")
+                .setMessage("即将永久删除已选择的 " + count
+                        + " 条本地记录。此操作无法撤销，未选择的记录不会受到影响。建议先导出加密备份。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确认删除", (dialog, which) -> deleteSelectedRecords())
+                .show();
+    }
+
+    private void deleteSelectedRecords() {
+        if (selectedRecordIds.isEmpty()) return;
+        List<Long> ids = new ArrayList<>(selectedRecordIds);
+        selectionSummary.setText("正在删除 " + ids.size() + " 条…");
+        ioExecutor.execute(() -> {
+            int deleted = 0;
+            String failure = null;
+            try (VaultDb db = new VaultDb(getApplicationContext())) {
+                deleted = db.deleteRecords(ids);
+            } catch (Exception error) {
+                failure = error.getMessage();
+            }
+            final int deletedCount = deleted;
+            final String errorMessage = failure;
+            mainHandler.post(() -> {
+                if (destroyed) return;
+                if (errorMessage == null) {
+                    selectionMode = false;
+                    selectedRecordIds.clear();
+                    refreshSelectionToolbar();
+                    toast("已删除 " + deletedCount + " 条记录");
+                    refreshMetrics();
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                } else {
+                    // Keep the selected IDs so the user can retry or inspect the failed operation.
+                    toast("批量删除失败：" + safe(errorMessage));
+                    refreshSelectionToolbar();
+                }
+            });
+        });
+    }
+
+    private void toggleFavorite(VaultRecord record, TextView action) {
+        if (record == null || record.id <= 0L || action == null) return;
+        boolean target = !record.favorite;
+        action.setEnabled(false);
+        try {
+            ioExecutor.execute(() -> {
+                boolean saved = false;
+                String errorText = null;
+                try (VaultDb db = new VaultDb(getApplicationContext())) {
+                    saved = db.setFavorite(record.id, target);
+                } catch (Exception error) {
+                    errorText = error.getMessage();
+                }
+                final boolean success = saved;
+                final String failure = errorText;
+                mainHandler.post(() -> {
+                    if (destroyed) return;
+                    action.setEnabled(true);
+                    if (!success) {
+                        toast("收藏状态保存失败：" + (failure == null ? "记录不存在或已删除" : safe(failure)));
+                        return;
+                    }
+                    record.favorite = target;
+                    action.setText(target ? "★" : "☆");
+                    action.setTextColor(target ? COLOR_BLUE : COLOR_MUTED);
+                    action.setContentDescription(target ? "取消收藏" : "收藏消息");
+                    toast(target ? "已收藏这条消息" : "已取消收藏");
+                    if ("favorite".equals(currentTypeFilter) && !target) {
+                        scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                    }
+                });
+            });
+        } catch (RuntimeException rejected) {
+            action.setEnabled(true);
+            toast("收藏任务无法启动，请稍后重试");
+        }
+    }
+
     private void addFilterChip(String label, String value) {
         TextView chip = text(label, 11, COLOR_MUTED, true);
         chip.setGravity(Gravity.CENTER);
@@ -1056,6 +1324,11 @@ public class MainActivity extends Activity {
     private void scheduleSearch(String query) {
         if (destroyed || recordList == null) return;
         currentQuery = query == null ? "" : query.trim();
+        selectedRecordIds.clear();
+        selectionMode = false;
+        visibleRecords.clear();
+        recordCardViews.clear();
+        refreshSelectionToolbar();
         nextBeforeTimestamp = 0L;
         nextBeforeId = 0L;
         displayedRecordCount = 0;
@@ -1143,7 +1416,14 @@ public class MainActivity extends Activity {
     }
 
     private void renderRecords(List<VaultRecord> records, String query, String error, boolean append) {
-        if (!append) recordList.removeAllViews();
+        if (!append) {
+            recordList.removeAllViews();
+            visibleRecords.clear();
+            recordCardViews.clear();
+            selectedRecordIds.clear();
+            selectionMode = false;
+            refreshSelectionToolbar();
+        }
         if (loadMoreView != null && loadMoreView.getParent() == recordList) {
             recordList.removeView(loadMoreView);
         }
@@ -1160,7 +1440,10 @@ public class MainActivity extends Activity {
             return;
         }
 
-        for (VaultRecord record : records) addRecordCard(record);
+        for (VaultRecord record : records) {
+            visibleRecords.add(record);
+            addRecordCard(record);
+        }
         displayedRecordCount += records.size();
         recordCount.setText(displayedRecordCount + " 条" + (hasMoreRecords ? " · 还有更多" : " · 已全部显示"));
 
@@ -1192,7 +1475,15 @@ public class MainActivity extends Activity {
         card.setBackground(roundBackground(COLOR_SURFACE, dp(16), COLOR_BORDER, dp(1)));
         card.setClickable(true);
         card.setFocusable(true);
-        card.setOnClickListener(view -> showRecordDetails(record));
+        card.setOnClickListener(view -> {
+            if (selectionMode) toggleRecordSelection(record.id);
+            else showRecordDetails(record);
+        });
+        card.setOnLongClickListener(view -> {
+            if (!selectionMode) enterSelectionMode(record.id);
+            else toggleRecordSelection(record.id);
+            return true;
+        });
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
@@ -1202,6 +1493,18 @@ public class MainActivity extends Activity {
         type.setPadding(dp(8), dp(5), dp(8), dp(5));
         type.setBackground(roundBackground(revoke ? COLOR_ERR_BG : COLOR_MESSAGE_BG, dp(30), Color.TRANSPARENT, 0));
         top.addView(type, new LinearLayout.LayoutParams(-2, -2));
+
+        TextView favorite = text(record.favorite ? "★" : "☆", 18,
+                record.favorite ? COLOR_BLUE : COLOR_MUTED, true);
+        favorite.setGravity(Gravity.CENTER);
+        favorite.setPadding(dp(8), dp(2), dp(8), dp(2));
+        favorite.setContentDescription(record.favorite ? "取消收藏" : "收藏消息");
+        favorite.setFocusable(true);
+        favorite.setClickable(true);
+        favorite.setOnClickListener(view -> toggleFavorite(record, favorite));
+        LinearLayout.LayoutParams favoriteLp = new LinearLayout.LayoutParams(-2, -2);
+        favoriteLp.leftMargin = dp(5);
+        top.addView(favorite, favoriteLp);
 
         String time = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", record.timestamp).toString();
         TextView timestamp = text(time, 10, COLOR_MUTED, false);
@@ -1248,6 +1551,8 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
         cardLp.bottomMargin = dp(9);
         recordList.addView(card, cardLp);
+        recordCardViews.put(record.id, card);
+        refreshRecordCardStyles();
     }
 
     private void showRecordDetails(VaultRecord record) {
@@ -1267,11 +1572,22 @@ public class MainActivity extends Activity {
                 .create();
         dialog.show();
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
-            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            if (clipboard != null) {
-                clipboard.setPrimaryClip(ClipData.newPlainText("NoticeVault message", detail.getText().toString()));
-                toast("消息详情已复制");
-            }
+            String fullContent = detail.getText().toString();
+            String preview = fullContent.length() > 500
+                    ? fullContent.substring(0, 500) + "\n……（完整内容将在确认后复制）"
+                    : fullContent;
+            new AlertDialog.Builder(this)
+                    .setTitle("确认复制消息")
+                    .setMessage("确定将以下内容复制到系统剪贴板吗？\n\n" + preview)
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("确认复制", (confirm, which) -> {
+                        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                        if (clipboard != null) {
+                            clipboard.setPrimaryClip(ClipData.newPlainText("NoticeVault message", fullContent));
+                            toast("消息内容已复制");
+                        }
+                    })
+                    .show();
         });
 
         if (!revoke || record.candidates == null || record.candidates.length() == 0) return;
@@ -1457,6 +1773,7 @@ public class MainActivity extends Activity {
                             output.write(packed);
                             output.flush();
                         }
+                        VaultPreferences.markBackupSucceeded(appContext, System.currentTimeMillis());
                         message = "加密备份导出成功（" + records.length() + " 条）";
                     } else {
                         try (InputStream stream = resolver.openInputStream(uri)) {
@@ -1506,6 +1823,7 @@ public class MainActivity extends Activity {
                     if (destroyed) return;
                     backupRunning = false;
                     toast(resultMessage);
+                    if (exporting) refreshBackupReminderBanner();
                     if (!exporting) scheduleSearch(query);
                 });
             });
@@ -1578,6 +1896,7 @@ public class MainActivity extends Activity {
         }
         enforceAppLock();
         refreshStatus();
+        refreshBackupReminderBanner();
         if (!VaultPreferences.isAppLockEnabled(this) || appUnlockedForSession) {
             refreshMetrics();
             if (searchInput != null) scheduleSearch(searchInput.getText().toString());
