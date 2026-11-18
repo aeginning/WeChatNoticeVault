@@ -84,6 +84,7 @@ public class MainActivity extends Activity {
     private final List<VaultRecord> visibleRecords = new ArrayList<>();
     private boolean selectionMode;
     private int dateFilterDays;
+    private long currentSinceTimestamp;
     private boolean favoriteOnlyFilter;
     private String currentPackageFilter = "";
     private String shizukuMessage = "Shizuku 权限状态尚未检查";
@@ -1106,6 +1107,11 @@ public class MainActivity extends Activity {
     private void scheduleSearch(String query) {
         if (destroyed || recordList == null) return;
         currentQuery = query == null ? "" : query.trim();
+        currentSinceTimestamp = dateFilterDays <= 0 ? 0L
+                : Math.max(0L, System.currentTimeMillis() - dateFilterDays * 24L * 60L * 60L * 1000L);
+        selectedRecordIds.clear();
+        visibleRecords.clear();
+        updateSelectionCount();
         nextBeforeTimestamp = 0L;
         nextBeforeId = 0L;
         displayedRecordCount = 0;
@@ -1142,6 +1148,9 @@ public class MainActivity extends Activity {
             recordCount.setText("正在检索…");
         }
 
+        final long sinceTimestamp = currentSinceTimestamp;
+        final String packageFilter = currentPackageFilter;
+        final boolean onlyFavorites = favoriteOnlyFilter;
         activeSearchFuture = searchExecutor.submit(() -> {
             List<VaultRecord> records = null;
             String errorMessage = null;
@@ -1152,7 +1161,8 @@ public class MainActivity extends Activity {
                 if (!append) {
                     VaultPreferences.maybeCleanupExpired(getApplicationContext(), db, System.currentTimeMillis());
                 }
-                records = db.searchPage(query, typeFilter, beforeTimestamp, beforeId, PAGE_SIZE + 1);
+                records = db.searchPage(query, typeFilter, sinceTimestamp, packageFilter,
+                        onlyFavorites, beforeTimestamp, beforeId, PAGE_SIZE + 1);
                 if (records.size() > PAGE_SIZE) {
                     more = true;
                     records.remove(records.size() - 1);
@@ -1187,7 +1197,10 @@ public class MainActivity extends Activity {
     }
 
     private void renderRecords(List<VaultRecord> records, String query, String error, boolean append) {
-        if (!append) recordList.removeAllViews();
+        if (!append) {
+            recordList.removeAllViews();
+            visibleRecords.clear();
+        }
         if (loadMoreView != null && loadMoreView.getParent() == recordList) {
             recordList.removeView(loadMoreView);
         }
@@ -1204,9 +1217,13 @@ public class MainActivity extends Activity {
             return;
         }
 
-        for (VaultRecord record : records) addRecordCard(record);
+        for (VaultRecord record : records) {
+            visibleRecords.add(record);
+            addRecordCard(record);
+        }
         displayedRecordCount += records.size();
         recordCount.setText(displayedRecordCount + " 条" + (hasMoreRecords ? " · 还有更多" : " · 已全部显示"));
+        updateSelectionCount();
 
         if (hasMoreRecords) {
             if (loadMoreView == null) {
@@ -1235,11 +1252,36 @@ public class MainActivity extends Activity {
         card.setBackground(roundBackground(Color.WHITE, dp(16), 0xFFE7EDF3, dp(1)));
         card.setClickable(true);
         card.setFocusable(true);
-        card.setOnClickListener(view -> showRecordDetails(record));
+        card.setOnClickListener(view -> {
+            if (selectionMode) {
+                if (selectedRecordIds.contains(record.id)) selectedRecordIds.remove(record.id);
+                else selectedRecordIds.add(record.id);
+                rerenderVisibleRecords();
+            } else {
+                showRecordDetails(record);
+            }
+        });
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
+        if (selectionMode) {
+            CheckBox checkBox = new CheckBox(this);
+            checkBox.setTag(Long.valueOf(record.id));
+            checkBox.setChecked(selectedRecordIds.contains(record.id));
+            checkBox.setOnCheckedChangeListener((button, checked) -> {
+                if (checked) selectedRecordIds.add(record.id);
+                else selectedRecordIds.remove(record.id);
+                updateSelectionCount();
+            });
+            top.addView(checkBox, new LinearLayout.LayoutParams(dp(34), dp(34)));
+        }
+        TextView favorite = text(record.favorite ? "★" : "☆", 18,
+                record.favorite ? 0xFFE2A400 : COLOR_MUTED, true);
+        favorite.setGravity(Gravity.CENTER);
+        favorite.setPadding(dp(4), 0, dp(7), 0);
+        favorite.setOnClickListener(view -> setRecordFavorite(record, !record.favorite));
+        top.addView(favorite, new LinearLayout.LayoutParams(-2, dp(34)));
         TextView type = text(revoke ? "撤回提示 / 候选关联" : "普通消息", 10,
             revoke ? COLOR_RED : COLOR_GREEN, true);
         type.setPadding(dp(8), dp(5), dp(8), dp(5));
