@@ -219,41 +219,66 @@ public class VaultDb extends SQLiteOpenHelper {
     }
 
     /** Update favorite metadata for a bounded set of IDs without decrypting message bodies. */
+    /** Update up to 10,000 favorites in transactional chunks below SQLite's bind-variable limit. */
     public synchronized int setFavorites(long[] ids, boolean favorite) {
         if (ids == null || ids.length == 0) return 0;
-        StringBuilder selection = new StringBuilder("_id IN (");
-        String[] args = new String[ids.length];
-        int count = 0;
-        for (long id : ids) {
-            if (id <= 0L) continue;
-            if (count > 0) selection.append(',');
-            selection.append('?');
-            args[count++] = String.valueOf(id);
-        }
-        if (count == 0) return 0;
-        selection.append(')');
-        if (count != args.length) args = java.util.Arrays.copyOf(args, count);
+        if (ids.length > MAX_RECORDS) throw new IllegalArgumentException("收藏操作数量超过限制");
+        SQLiteDatabase db = getWritableDatabase();
         ContentValues values = new ContentValues();
         values.put("favorite", favorite ? 1 : 0);
-        return getWritableDatabase().update("records", values, selection.toString(), args);
+        int changed = 0;
+        db.beginTransaction();
+        try {
+            for (int offset = 0; offset < ids.length; offset += 900) {
+                int end = Math.min(ids.length, offset + 900);
+                StringBuilder selection = new StringBuilder("_id IN (");
+                List<String> args = new ArrayList<>();
+                for (int i = offset; i < end; i++) {
+                    long id = ids[i];
+                    if (id <= 0L) continue;
+                    if (args.size() > 0) selection.append(',');
+                    selection.append('?');
+                    args.add(String.valueOf(id));
+                }
+                if (args.isEmpty()) continue;
+                selection.append(')');
+                changed += db.update("records", values, selection.toString(), args.toArray(new String[0]));
+            }
+            db.setTransactionSuccessful();
+            return changed;
+        } finally {
+            db.endTransaction();
+        }
     }
 
     /** Delete only explicitly selected IDs; empty or invalid input is a no-op. */
     public synchronized int deleteRecords(long[] ids) {
         if (ids == null || ids.length == 0) return 0;
-        StringBuilder selection = new StringBuilder("_id IN (");
-        String[] args = new String[ids.length];
-        int count = 0;
-        for (long id : ids) {
-            if (id <= 0L) continue;
-            if (count > 0) selection.append(',');
-            selection.append('?');
-            args[count++] = String.valueOf(id);
+        if (ids.length > MAX_RECORDS) throw new IllegalArgumentException("删除操作数量超过限制");
+        SQLiteDatabase db = getWritableDatabase();
+        int deleted = 0;
+        db.beginTransaction();
+        try {
+            for (int offset = 0; offset < ids.length; offset += 900) {
+                int end = Math.min(ids.length, offset + 900);
+                StringBuilder selection = new StringBuilder("_id IN (");
+                List<String> args = new ArrayList<>();
+                for (int i = offset; i < end; i++) {
+                    long id = ids[i];
+                    if (id <= 0L) continue;
+                    if (args.size() > 0) selection.append(',');
+                    selection.append('?');
+                    args.add(String.valueOf(id));
+                }
+                if (args.isEmpty()) continue;
+                selection.append(')');
+                deleted += db.delete("records", selection.toString(), args.toArray(new String[0]));
+            }
+            db.setTransactionSuccessful();
+            return deleted;
+        } finally {
+            db.endTransaction();
         }
-        if (count == 0) return 0;
-        selection.append(')');
-        if (count != args.length) args = java.util.Arrays.copyOf(args, count);
-        return getWritableDatabase().delete("records", selection.toString(), args);
     }
 
     public synchronized long countFavorites() {
@@ -361,6 +386,9 @@ public class VaultDb extends SQLiteOpenHelper {
                 long destinationId;
                 if (existingId > 0L) {
                     destinationId = existingId;
+                    // Backup import merges favorites; an incoming favorite may add one but
+                    // an older/non-favorite backup must not erase a local favorite.
+                    if (record.favorite) setFavorite(existingId, true);
                     skippedCount++;
                 } else {
                     if (startingCount + insertedCount >= MAX_RECORDS) {
