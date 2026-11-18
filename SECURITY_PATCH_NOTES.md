@@ -44,3 +44,11 @@ JUnit tests cover the pure-Java compression helper and its decompression limit. 
 - Added an Android adaptive launcher icon using the latest Library image supplied by the user (`mmexport1794946980382.jpg`, sunflower field photograph), cropped/resized as the foreground artwork with a blue background layer.
 - Configured both `android:icon` and `android:roundIcon` to the adaptive icon resource.
 - Incremented versionName to 2.1.6 and versionCode to 216. No package ID, database schema, or Keystore alias changes.
+
+
+# 2.1.9 UI, search and privacy improvements
+
+- Added system/light/dark theme selection. Theme preference does not change notification service, database or Keystore state.
+- Added app-source and recent-time filters. Timestamp bounds are applied in SQLite; package matching is performed after decrypting each candidate so app package names are not persisted as plaintext search indexes.
+- Added optional list-preview masking for conversation, title, message body and revoke candidate identifiers. Full details remain available after the user opens a record; stored message payloads are not modified.
+- No database schema, encrypted record format, Android Keystore alias, backup envelope, or notification ingestion behavior changes in this release.

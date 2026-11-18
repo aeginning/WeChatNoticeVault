@@ -57,12 +57,13 @@ public class MainActivity extends Activity {
     private static final int MAX_BACKUP_RECORDS = 10000;
     private static final int MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
-    private static final int COLOR_BG = Color.rgb(244, 247, 251);
-    private static final int COLOR_TEXT = Color.rgb(28, 42, 58);
-    private static final int COLOR_MUTED = Color.rgb(106, 121, 139);
-    private static final int COLOR_BLUE = Color.rgb(38, 105, 190);
-    private static final int COLOR_GREEN = Color.rgb(26, 142, 100);
-    private static final int COLOR_RED = Color.rgb(190, 65, 73);
+    private boolean darkTheme;
+    private int COLOR_BG, COLOR_TEXT, COLOR_MUTED, COLOR_BLUE, COLOR_GREEN, COLOR_RED;
+    private int COLOR_SURFACE, COLOR_BORDER, COLOR_TILE_BG, COLOR_TILE_BORDER;
+    private int COLOR_DANGER_BG, COLOR_DANGER_BORDER, COLOR_DANGER_MUTED;
+    private int COLOR_HINT, COLOR_ARROW, COLOR_BODY, COLOR_NEUTRAL_BORDER;
+    private int COLOR_OK_BG, COLOR_ERR_BG, COLOR_CHIP_BG, COLOR_CHIP_BORDER;
+    private int COLOR_LOAD_BORDER, COLOR_MESSAGE_BG, COLOR_EMPTY_ICON;
 
     private LinearLayout recordList;
     private TextView recordCount;
@@ -75,6 +76,11 @@ public class MainActivity extends Activity {
     private TextView todayCountValue;
     private LinearLayout filterRow;
     private TextView loadMoreView;
+    private TextView appFilterView;
+    private TextView dateFilterView;
+    private String currentPackageFilter = "";
+    private int currentDateFilterDays;
+    private long currentDateStartTimestamp;
     private String shizukuMessage = "Shizuku 权限状态尚未检查";
     private char[] pendingPassword;
     private boolean backupRunning;
@@ -119,24 +125,61 @@ public class MainActivity extends Activity {
 
     @Override
     public void onCreate(Bundle state) {
+        String themeMode = VaultPreferences.getThemeMode(this);
+        int uiNightMode = getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        darkTheme = "dark".equals(themeMode)
+                || ("system".equals(themeMode)
+                && uiNightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES);
+        setTheme(darkTheme ? android.R.style.Theme_Material_NoActionBar
+                : android.R.style.Theme_Material_Light_NoActionBar);
         super.onCreate(state);
+        applyColorPalette();
         Shizuku.addRequestPermissionResultListener(permissionListener);
         configureSystemBars();
         buildUi();
         refreshStatus();
     }
 
+    private void applyColorPalette() {
+        COLOR_BG = darkTheme ? Color.rgb(17, 23, 32) : Color.rgb(244, 247, 251);
+        COLOR_TEXT = darkTheme ? Color.rgb(232, 238, 246) : Color.rgb(28, 42, 58);
+        COLOR_MUTED = darkTheme ? Color.rgb(164, 177, 194) : Color.rgb(106, 121, 139);
+        COLOR_BLUE = darkTheme ? Color.rgb(113, 174, 245) : Color.rgb(38, 105, 190);
+        COLOR_GREEN = darkTheme ? Color.rgb(91, 202, 151) : Color.rgb(26, 142, 100);
+        COLOR_RED = darkTheme ? Color.rgb(255, 133, 139) : Color.rgb(190, 65, 73);
+        COLOR_SURFACE = darkTheme ? Color.rgb(29, 38, 51) : Color.WHITE;
+        COLOR_BORDER = darkTheme ? Color.rgb(54, 67, 84) : 0xFFE8EDF3;
+        COLOR_TILE_BG = darkTheme ? Color.rgb(36, 47, 62) : 0xFFF3F6FA;
+        COLOR_TILE_BORDER = darkTheme ? Color.rgb(54, 67, 84) : 0xFFE9EEF4;
+        COLOR_DANGER_BG = darkTheme ? Color.rgb(65, 37, 43) : 0xFFFFF8F8;
+        COLOR_DANGER_BORDER = darkTheme ? Color.rgb(105, 58, 65) : 0xFFF0D9DB;
+        COLOR_DANGER_MUTED = darkTheme ? Color.rgb(236, 160, 166) : 0xFF9B6A6E;
+        COLOR_HINT = darkTheme ? Color.rgb(139, 154, 173) : 0xFF9BA9B8;
+        COLOR_ARROW = darkTheme ? Color.rgb(142, 158, 178) : 0xFF9AA8B7;
+        COLOR_BODY = darkTheme ? Color.rgb(205, 216, 229) : 0xFF44566B;
+        COLOR_NEUTRAL_BORDER = darkTheme ? Color.rgb(57, 70, 88) : 0xFFE4EAF0;
+        COLOR_OK_BG = darkTheme ? Color.rgb(29, 72, 58) : 0xFFE9F7F0;
+        COLOR_ERR_BG = darkTheme ? Color.rgb(76, 39, 45) : 0xFFFFEEEE;
+        COLOR_CHIP_BG = darkTheme ? Color.rgb(40, 52, 68) : 0xFFF1F4F8;
+        COLOR_CHIP_BORDER = darkTheme ? Color.rgb(57, 70, 88) : 0xFFE1E7EE;
+        COLOR_LOAD_BORDER = darkTheme ? Color.rgb(57, 70, 88) : 0xFFE2EAF2;
+        COLOR_MESSAGE_BG = darkTheme ? Color.rgb(34, 69, 56) : 0xFFEAF7F0;
+        COLOR_EMPTY_ICON = darkTheme ? Color.rgb(126, 145, 168) : 0xFF9EADBD;
+    }
+
     private void configureSystemBars() {
         Window window = getWindow();
         window.setStatusBarColor(COLOR_BG);
-        window.setNavigationBarColor(Color.WHITE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-            );
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        window.setNavigationBarColor(COLOR_SURFACE);
+        int flags = 0;
+        if (!darkTheme) {
+            flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
         }
+        window.getDecorView().setSystemUiVisibility(flags);
     }
 
     private void buildUi() {
@@ -163,6 +206,10 @@ public class MainActivity extends Activity {
         addActionCard(root, "▣", "通知来源管理", "默认仅保存微信通知，可按需添加其他应用", COLOR_BLUE, this::showSourcePicker);
         addActionCard(root, "◷", "自动清理期限", "可关闭，或设置保留 7 / 30 / 90 天", COLOR_MUTED, this::showRetentionDialog);
         addActionCard(root, "▤", "设备锁保护", "使用手机系统锁屏密码或生物识别验证", COLOR_GREEN, this::toggleAppLock);
+
+        addSectionHeading(root, "外观与隐私", "调整界面显示方式，降低消息预览泄露风险");
+        addActionCard(root, "◐", "界面主题", themeModeLabel(), COLOR_BLUE, this::showThemeDialog);
+        addActionCard(root, "◌", "消息预览遮挡", previewPrivacyLabel(), COLOR_GREEN, this::showPreviewPrivacyDialog);
 
         addSectionHeading(root, "备份与数据", "备份文件使用密码加密，请妥善保管密码");
         addActionCard(root, "⇧", "导出加密备份", "将本机留存记录导出为 .nvbk 文件", COLOR_BLUE, () -> passwordDialog(true));
@@ -195,7 +242,7 @@ public class MainActivity extends Activity {
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView version = new TextView(this);
-        version.setText("VERSION 2.1.8");
+        version.setText("VERSION 2.1.9");
         version.setTextColor(Color.WHITE);
         version.setTextSize(10);
         version.setLetterSpacing(0.06f);
@@ -229,7 +276,7 @@ public class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(16), dp(16), dp(16), dp(14));
-        card.setBackground(roundBackground(Color.WHITE, dp(20), 0xFFE8EDF3, dp(1)));
+        card.setBackground(roundBackground(COLOR_SURFACE, dp(20), COLOR_BORDER, dp(1)));
         card.setElevation(dp(1));
 
         TextView heading = text("运行状态", 16, COLOR_TEXT, true);
@@ -270,7 +317,7 @@ public class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setPadding(dp(12), dp(12), dp(12), dp(12));
-        card.setBackground(roundBackground(Color.WHITE, dp(18), 0xFFE8EDF3, dp(1)));
+        card.setBackground(roundBackground(COLOR_SURFACE, dp(18), COLOR_BORDER, dp(1)));
         LinearLayout total = createMetricTile("累计留存", "读取中");
         LinearLayout today = createMetricTile("今日新增", "读取中");
         totalCountValue = (TextView) total.getTag();
@@ -329,7 +376,7 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER);
         box.setPadding(dp(4), dp(10), dp(4), dp(10));
-        box.setBackground(roundBackground(0xFFF3F6FA, dp(13), 0xFFE9EEF4, dp(1)));
+        box.setBackground(roundBackground(COLOR_TILE_BG, dp(13), COLOR_TILE_BORDER, dp(1)));
 
         TextView labelView = text(label, 10, COLOR_MUTED, false);
         labelView.setGravity(Gravity.CENTER);
@@ -369,7 +416,7 @@ public class MainActivity extends Activity {
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14), dp(13), dp(14), dp(13));
-        card.setBackground(roundBackground(Color.WHITE, dp(17), 0xFFE8EDF3, dp(1)));
+        card.setBackground(roundBackground(COLOR_SURFACE, dp(17), COLOR_BORDER, dp(1)));
         card.setElevation(dp(1));
         card.setClickable(true);
         card.setFocusable(true);
@@ -393,7 +440,7 @@ public class MainActivity extends Activity {
         subLp.topMargin = dp(4);
         labels.addView(sub, subLp);
 
-        TextView arrow = text("›", 25, 0xFF9AA8B7, false);
+        TextView arrow = text("›", 25, COLOR_ARROW, false);
         arrow.setGravity(Gravity.CENTER);
         card.addView(arrow, new LinearLayout.LayoutParams(dp(20), -2));
 
@@ -407,12 +454,12 @@ public class MainActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
         card.setPadding(dp(14), dp(13), dp(14), dp(13));
-        card.setBackground(roundBackground(0xFFFFF8F8, dp(16), 0xFFF0D9DB, dp(1)));
+        card.setBackground(roundBackground(COLOR_DANGER_BG, dp(16), COLOR_DANGER_BORDER, dp(1)));
         card.setClickable(true);
         card.setFocusable(true);
         card.setOnClickListener(v -> action.run());
         card.addView(text(title, 14, COLOR_RED, true));
-        TextView sub = text(subtitle, 10, 0xFF9B6A6E, false);
+        TextView sub = text(subtitle, 10, COLOR_DANGER_MUTED, false);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-2, -2);
         subLp.topMargin = dp(3);
         card.addView(sub, subLp);
@@ -437,7 +484,7 @@ public class MainActivity extends Activity {
         searchCard.setOrientation(LinearLayout.HORIZONTAL);
         searchCard.setGravity(Gravity.CENTER_VERTICAL);
         searchCard.setPadding(dp(13), 0, dp(13), 0);
-        searchCard.setBackground(roundBackground(Color.WHITE, dp(15), 0xFFE3EAF1, dp(1)));
+        searchCard.setBackground(roundBackground(COLOR_SURFACE, dp(15), COLOR_BORDER, dp(1)));
         TextView searchIcon = text("⌕", 22, COLOR_MUTED, true);
         searchIcon.setGravity(Gravity.CENTER);
         searchCard.addView(searchIcon, new LinearLayout.LayoutParams(dp(25), dp(50)));
@@ -445,7 +492,7 @@ public class MainActivity extends Activity {
         searchInput.setSingleLine(true);
         searchInput.setTextSize(14);
         searchInput.setTextColor(COLOR_TEXT);
-        searchInput.setHintTextColor(0xFF9BA9B8);
+        searchInput.setHintTextColor(COLOR_HINT);
         searchInput.setHint("搜索会话、标题或消息内容");
         searchInput.setPadding(dp(7), 0, dp(5), 0);
         searchInput.setBackgroundColor(Color.TRANSPARENT);
@@ -469,6 +516,19 @@ public class MainActivity extends Activity {
         addFilterChip("普通消息", VaultRecord.MESSAGE);
         addFilterChip("撤回提示", VaultRecord.REVOKE);
         root.addView(filterRow, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout advancedFilters = new LinearLayout(this);
+        advancedFilters.setOrientation(LinearLayout.HORIZONTAL);
+        advancedFilters.setGravity(Gravity.CENTER_VERTICAL);
+        advancedFilters.setPadding(0, 0, 0, dp(9));
+        appFilterView = createFilterAction("应用：全部", this::showAppFilterDialog);
+        dateFilterView = createFilterAction("时间：全部", this::showDateFilterDialog);
+        LinearLayout.LayoutParams appFilterLp = new LinearLayout.LayoutParams(0, -2, 1);
+        appFilterLp.rightMargin = dp(6);
+        advancedFilters.addView(appFilterView, appFilterLp);
+        advancedFilters.addView(dateFilterView, new LinearLayout.LayoutParams(0, -2, 1));
+        root.addView(advancedFilters, new LinearLayout.LayoutParams(-1, -2));
+        updateAdvancedFilterLabels();
 
         recordList = new LinearLayout(this);
         recordList.setOrientation(LinearLayout.VERTICAL);
@@ -557,15 +617,138 @@ public class MainActivity extends Activity {
     private void markOptionalStatus(TextView value) {
         value.setText("可选");
         value.setTextColor(COLOR_MUTED);
-        value.setBackground(roundBackground(0xFFF1F4F8, dp(30), 0xFFE4EAF0, dp(1)));
+        value.setBackground(roundBackground(COLOR_CHIP_BG, dp(30), COLOR_NEUTRAL_BORDER, dp(1)));
         value.setPadding(dp(7), dp(4), dp(7), dp(4));
     }
 
     private void updateStatusTile(TextView value, String label, boolean active) {
         value.setText(active ? "已开启" : "未开启");
         value.setTextColor(active ? COLOR_GREEN : COLOR_RED);
-        value.setBackground(roundBackground(active ? 0xFFE9F7F0 : 0xFFFFEEEE, dp(30), Color.TRANSPARENT, 0));
+        value.setBackground(roundBackground(active ? COLOR_OK_BG : COLOR_ERR_BG, dp(30), Color.TRANSPARENT, 0));
         value.setPadding(dp(7), dp(4), dp(7), dp(4));
+    }
+
+    private String themeModeLabel() {
+        String mode = VaultPreferences.getThemeMode(this);
+        if ("dark".equals(mode)) return "深色模式";
+        if ("light".equals(mode)) return "浅色模式";
+        return "跟随系统";
+    }
+
+    private String previewPrivacyLabel() {
+        return VaultPreferences.isPreviewHidden(this)
+                ? "列表中的会话、标题和正文预览已遮挡"
+                : "列表默认显示消息预览";
+    }
+
+    private void showThemeDialog() {
+        String[] labels = new String[]{"跟随系统", "浅色模式", "深色模式"};
+        String[] values = new String[]{"system", "light", "dark"};
+        String current = VaultPreferences.getThemeMode(this);
+        int selected = "light".equals(current) ? 1 : ("dark".equals(current) ? 2 : 0);
+        new AlertDialog.Builder(this)
+                .setTitle("界面主题")
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    VaultPreferences.setThemeMode(this, values[which]);
+                    dialog.dismiss();
+                    recreate();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showPreviewPrivacyDialog() {
+        boolean hidden = VaultPreferences.isPreviewHidden(this);
+        new AlertDialog.Builder(this)
+                .setTitle("消息预览遮挡")
+                .setMessage(hidden
+                        ? "当前列表已隐藏会话、标题和消息正文。点击记录仍可查看完整详情。"
+                        : "开启后，列表不显示会话名称、标题和消息正文预览；点击记录仍可查看完整详情。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton(hidden ? "关闭遮挡" : "开启遮挡", (dialog, which) -> {
+                    VaultPreferences.setPreviewHidden(this, !hidden);
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                    toast(!hidden ? "消息预览遮挡已开启" : "消息预览遮挡已关闭");
+                })
+                .show();
+    }
+
+    private TextView createFilterAction(String label, Runnable action) {
+        TextView view = text(label, 11, COLOR_MUTED, true);
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(dp(10), dp(10), dp(10), dp(10));
+        view.setBackground(roundBackground(COLOR_CHIP_BG, dp(12), COLOR_CHIP_BORDER, dp(1)));
+        view.setClickable(true);
+        view.setFocusable(true);
+        view.setOnClickListener(v -> action.run());
+        return view;
+    }
+
+    private void updateAdvancedFilterLabels() {
+        if (appFilterView != null) {
+            appFilterView.setText(currentPackageFilter.isEmpty()
+                    ? "应用：全部" : "应用：" + getPackageLabel(currentPackageFilter));
+        }
+        if (dateFilterView != null) {
+            dateFilterView.setText(currentDateFilterDays == 0 ? "时间：全部"
+                    : currentDateFilterDays == 1 ? "时间：24 小时"
+                    : "时间：最近 " + currentDateFilterDays + " 天");
+        }
+    }
+
+    private String getPackageLabel(String packageName) {
+        try {
+            CharSequence label = getPackageManager().getApplicationLabel(
+                    getPackageManager().getApplicationInfo(packageName, 0));
+            return label == null ? packageName : label.toString();
+        } catch (PackageManager.NameNotFoundException error) {
+            return packageName;
+        }
+    }
+
+    private void showAppFilterDialog() {
+        Set<String> allowed = VaultPreferences.getAllowedPackages(this);
+        List<AppChoice> choices = new ArrayList<>();
+        for (String packageName : allowed) {
+            if (packageName == null || packageName.trim().isEmpty()) continue;
+            choices.add(new AppChoice(packageName, getPackageLabel(packageName)));
+        }
+        Collections.sort(choices, Comparator.comparing(
+                choice -> choice.label.toLowerCase(java.util.Locale.ROOT)));
+        CharSequence[] labels = new CharSequence[choices.size() + 1];
+        labels[0] = "全部应用";
+        for (int i = 0; i < choices.size(); i++) labels[i + 1] = choices.get(i).label;
+        int selected = 0;
+        for (int i = 0; i < choices.size(); i++) {
+            if (choices.get(i).packageName.equals(currentPackageFilter)) selected = i + 1;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("按通知来源筛选")
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    currentPackageFilter = which == 0 ? "" : choices.get(which - 1).packageName;
+                    updateAdvancedFilterLabels();
+                    dialog.dismiss();
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showDateFilterDialog() {
+        int[] days = new int[]{0, 1, 7, 30};
+        String[] labels = new String[]{"全部时间", "最近 24 小时", "最近 7 天", "最近 30 天"};
+        int selected = 0;
+        for (int i = 0; i < days.length; i++) if (days[i] == currentDateFilterDays) selected = i;
+        new AlertDialog.Builder(this)
+                .setTitle("按时间筛选")
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    currentDateFilterDays = days[which];
+                    updateAdvancedFilterLabels();
+                    dialog.dismiss();
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void showSourcePicker() {
@@ -840,7 +1023,7 @@ public class MainActivity extends Activity {
         TextView chip = text(label, 11, COLOR_MUTED, true);
         chip.setGravity(Gravity.CENTER);
         chip.setPadding(dp(13), dp(8), dp(13), dp(8));
-        chip.setBackground(roundBackground(0xFFF1F4F8, dp(30), 0xFFE1E7EE, dp(1)));
+        chip.setBackground(roundBackground(COLOR_CHIP_BG, dp(30), COLOR_CHIP_BORDER, dp(1)));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
         lp.rightMargin = dp(7);
         filterRow.addView(chip, lp);
@@ -861,10 +1044,10 @@ public class MainActivity extends Activity {
         for (int i = 0; i < filterRow.getChildCount(); i++) {
             TextView chip = (TextView) filterRow.getChildAt(i);
             boolean selected = currentTypeFilter.equals(chip.getTag());
-            chip.setTextColor(selected ? Color.WHITE : COLOR_MUTED);
+            chip.setTextColor(selected ? (darkTheme ? Color.rgb(17, 23, 32) : Color.WHITE) : COLOR_MUTED);
             chip.setBackground(roundBackground(
-                    selected ? COLOR_BLUE : 0xFFF1F4F8, dp(30),
-                    selected ? COLOR_BLUE : 0xFFE1E7EE, dp(1)));
+                    selected ? COLOR_BLUE : COLOR_CHIP_BG, dp(30),
+                    selected ? COLOR_BLUE : COLOR_CHIP_BORDER, dp(1)));
         }
     }
 
@@ -885,19 +1068,24 @@ public class MainActivity extends Activity {
         recordCount.setText("等待检索…");
         pendingSearch = () -> {
             pendingSearch = null;
-            loadRecords(currentQuery, currentTypeFilter, 0L, 0L, generation, false);
+            currentDateStartTimestamp = RecordFilter.startTimestamp(
+                    currentDateFilterDays, System.currentTimeMillis());
+            loadRecords(currentQuery, currentTypeFilter, currentPackageFilter,
+                    currentDateStartTimestamp, 0L, 0L, generation, false);
         };
         mainHandler.postDelayed(pendingSearch, 220);
     }
 
     private void loadMoreRecords() {
         if (destroyed || searchLoading || !hasMoreRecords) return;
-        loadRecords(currentQuery, currentTypeFilter, nextBeforeTimestamp, nextBeforeId,
+        loadRecords(currentQuery, currentTypeFilter, currentPackageFilter,
+                currentDateStartTimestamp, nextBeforeTimestamp, nextBeforeId,
                 searchGeneration, true);
     }
 
-    private void loadRecords(String query, String typeFilter, long beforeTimestamp,
-                             long beforeId, int generation, boolean append) {
+    private void loadRecords(String query, String typeFilter, String packageFilter,
+                             long fromTimestamp, long beforeTimestamp, long beforeId,
+                             int generation, boolean append) {
         if (searchLoading || generation != searchGeneration) return;
         searchLoading = true;
         if (loadMoreView != null && loadMoreView.getParent() == recordList) {
@@ -917,7 +1105,8 @@ public class MainActivity extends Activity {
                 if (!append) {
                     VaultPreferences.maybeCleanupExpired(getApplicationContext(), db, System.currentTimeMillis());
                 }
-                records = db.searchPage(query, typeFilter, beforeTimestamp, beforeId, PAGE_SIZE + 1);
+                records = db.searchPage(query, typeFilter, packageFilter, fromTimestamp,
+                        beforeTimestamp, beforeId, PAGE_SIZE + 1);
                 if (records.size() > PAGE_SIZE) {
                     more = true;
                     records.remove(records.size() - 1);
@@ -978,7 +1167,7 @@ public class MainActivity extends Activity {
                 loadMoreView = text("加载更多记录", 12, COLOR_BLUE, true);
                 loadMoreView.setGravity(Gravity.CENTER);
                 loadMoreView.setPadding(dp(12), dp(16), dp(12), dp(16));
-                loadMoreView.setBackground(roundBackground(Color.WHITE, dp(14), 0xFFE2EAF2, dp(1)));
+                loadMoreView.setBackground(roundBackground(COLOR_SURFACE, dp(14), COLOR_LOAD_BORDER, dp(1)));
                 loadMoreView.setFocusable(true);
                 loadMoreView.setClickable(true);
                 loadMoreView.setOnClickListener(view -> loadMoreRecords());
@@ -994,10 +1183,11 @@ public class MainActivity extends Activity {
 
     private void addRecordCard(VaultRecord record) {
         boolean revoke = VaultRecord.REVOKE.equals(record.type);
+        boolean hidePreview = VaultPreferences.isPreviewHidden(this);
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(15), dp(14), dp(15), dp(14));
-        card.setBackground(roundBackground(Color.WHITE, dp(16), 0xFFE7EDF3, dp(1)));
+        card.setBackground(roundBackground(COLOR_SURFACE, dp(16), COLOR_BORDER, dp(1)));
         card.setClickable(true);
         card.setFocusable(true);
         card.setOnClickListener(view -> showRecordDetails(record));
@@ -1008,7 +1198,7 @@ public class MainActivity extends Activity {
         TextView type = text(revoke ? "撤回提示 / 候选关联" : "普通消息", 10,
             revoke ? COLOR_RED : COLOR_GREEN, true);
         type.setPadding(dp(8), dp(5), dp(8), dp(5));
-        type.setBackground(roundBackground(revoke ? 0xFFFFEEEE : 0xFFEAF7F0, dp(30), Color.TRANSPARENT, 0));
+        type.setBackground(roundBackground(revoke ? COLOR_ERR_BG : COLOR_MESSAGE_BG, dp(30), Color.TRANSPARENT, 0));
         top.addView(type, new LinearLayout.LayoutParams(-2, -2));
 
         String time = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", record.timestamp).toString();
@@ -1019,20 +1209,26 @@ public class MainActivity extends Activity {
         top.addView(timestamp, timeLp);
         card.addView(top);
 
-        TextView conversation = text(safe(record.conversation), 13, COLOR_TEXT, true);
+        TextView conversation = text(hidePreview ? "会话内容已遮挡" : safe(record.conversation),
+                13, COLOR_TEXT, true);
         LinearLayout.LayoutParams conversationLp = new LinearLayout.LayoutParams(-1, -2);
         conversationLp.topMargin = dp(10);
         card.addView(conversation, conversationLp);
 
-        if (!safe(record.title).trim().isEmpty()) {
+        if (!hidePreview && !safe(record.title).trim().isEmpty()) {
             TextView title = text(safe(record.title), 12, COLOR_MUTED, true);
             LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
             titleLp.topMargin = dp(5);
             card.addView(title, titleLp);
         }
 
-        if (!safe(record.text).trim().isEmpty()) {
-            TextView body = text(safe(record.text), 13, 0xFF44566B, false);
+        if (hidePreview && (!safe(record.title).trim().isEmpty() || !safe(record.text).trim().isEmpty())) {
+            TextView hidden = text("消息预览已隐藏 · 点击查看详情", 12, COLOR_MUTED, false);
+            LinearLayout.LayoutParams hiddenLp = new LinearLayout.LayoutParams(-1, -2);
+            hiddenLp.topMargin = dp(6);
+            card.addView(hidden, hiddenLp);
+        } else if (!safe(record.text).trim().isEmpty()) {
+            TextView body = text(safe(record.text), 13, COLOR_BODY, false);
             body.setLineSpacing(dp(2), 1f);
             body.setMaxLines(6);
             LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1040,7 +1236,7 @@ public class MainActivity extends Activity {
             card.addView(body, bodyLp);
         }
 
-        if (revoke && record.candidates != null && record.candidates.length() > 0) {
+        if (!hidePreview && revoke && record.candidates != null && record.candidates.length() > 0) {
             TextView candidates = text("关联候选记录 ID：" + record.candidates, 10, COLOR_RED, false);
             LinearLayout.LayoutParams candidateLp = new LinearLayout.LayoutParams(-1, -2);
             candidateLp.topMargin = dp(7);
@@ -1083,8 +1279,8 @@ public class MainActivity extends Activity {
         empty.setOrientation(LinearLayout.VERTICAL);
         empty.setGravity(Gravity.CENTER);
         empty.setPadding(dp(20), dp(28), dp(20), dp(28));
-        empty.setBackground(roundBackground(Color.WHITE, dp(17), 0xFFE8EDF3, dp(1)));
-        TextView icon = text("⌕", 32, 0xFF9EADBD, true);
+        empty.setBackground(roundBackground(COLOR_SURFACE, dp(17), COLOR_BORDER, dp(1)));
+        TextView icon = text("⌕", 32, COLOR_EMPTY_ICON, true);
         icon.setGravity(Gravity.CENTER);
         empty.addView(icon);
         TextView heading = text(title, 14, COLOR_TEXT, true);
