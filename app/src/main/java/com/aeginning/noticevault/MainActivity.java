@@ -862,7 +862,12 @@ public class MainActivity extends Activity {
                     Set<String> defaults = new HashSet<>();
                     defaults.add(VaultPreferences.WECHAT_PACKAGE);
                     VaultPreferences.setAllowedPackages(this, defaults);
+                    if (!VaultPreferences.WECHAT_PACKAGE.equals(currentPackageFilter)) {
+                        currentPackageFilter = "";
+                    }
+                    updateAdvancedFilterLabels();
                     toast("已恢复为仅保存微信通知");
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
                 })
                 .setNegativeButton("取消", null)
                 .setPositiveButton("保存", (dialog, which) -> {
