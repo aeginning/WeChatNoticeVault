@@ -38,7 +38,7 @@ public class RevokeMatcherTest {
     }
     @Test public void candidateRejectsFutureOrOlderThanFiveMinutes() {
         VaultRecord revoke = record(1_000_000L, VaultRecord.REVOKE, "群聊A", "com.tencent.mm");
-        assertFalse(RevokeMatcher.isCandidate(record(700_000L, VaultRecord.MESSAGE, "群聊A", "com.tencent.mm"), revoke));
+        assertFalse(RevokeMatcher.isCandidate(record(699_999L, VaultRecord.MESSAGE, "群聊A", "com.tencent.mm"), revoke));
         assertFalse(RevokeMatcher.isCandidate(record(1_000_001L, VaultRecord.MESSAGE, "群聊A", "com.tencent.mm"), revoke));
     }
     private static VaultRecord record(long ts, String type, String conversation, String pkg) {

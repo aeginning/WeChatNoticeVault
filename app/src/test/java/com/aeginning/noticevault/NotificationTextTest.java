@@ -10,7 +10,7 @@ public class NotificationTextTest {
                 Arrays.asList("Alice：早上好", "", null, "Bob：你好"), 100));
     }
     @Test public void enforcesMaximumLengthIncludingSeparators() {
-        assertEquals("1234\n567", NotificationText.joinMessages(Arrays.asList("1234", "567890"), 7));
+        assertEquals("1234\n56", NotificationText.joinMessages(Arrays.asList("1234", "567890"), 7));
     }
     @Test public void handlesNullInputAndInvalidLimits() {
         assertEquals("", NotificationText.joinMessages(null, 100));
