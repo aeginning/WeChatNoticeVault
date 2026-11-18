@@ -167,6 +167,7 @@ public class MainActivity extends Activity {
         addSectionHeading(root, "备份与数据", "备份文件使用密码加密，请妥善保管密码");
         addActionCard(root, "⇧", "导出加密备份", "将本机留存记录导出为 .nvbk 文件", COLOR_BLUE, () -> passwordDialog(true));
         addActionCard(root, "⇩", "导入加密备份", "从已有备份恢复记录", COLOR_GREEN, () -> passwordDialog(false));
+        addActionCard(root, "✓", "检查本地数据完整性", "只读检查 SQLite 结构、密钥别名和存储占用", COLOR_GREEN, this::checkDatabaseHealth);
         addActionCard(root, "↻", "整理本地数据库", "回收空闲页面，尝试减少数据库文件占用", COLOR_MUTED, this::compactStorage);
         addDangerAction(root, "清空全部记录", "仅删除本机记录，不可撤销", this::confirmClearAll);
 
@@ -194,7 +195,7 @@ public class MainActivity extends Activity {
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView version = new TextView(this);
-        version.setText("VERSION 2.1.7");
+        version.setText("VERSION 2.1.8");
         version.setTextColor(Color.WHITE);
         version.setTextSize(10);
         version.setLetterSpacing(0.06f);
@@ -545,6 +546,11 @@ public class MainActivity extends Activity {
                 ? "通知监听已开启，消息留存正常工作。Shizuku 是可选扩展。"
                 : "请先开启 Android 通知监听权限；Shizuku 为可选功能，不影响基础通知留存。";
         if (shizukuGranted) detail += " Shizuku 授权通过。";
+        long droppedNotifications = VaultPreferences.getDroppedNotificationCount(this);
+        if (droppedNotifications > 0L) {
+            detail += "\n警告：通知队列累计有 " + droppedNotifications
+                    + " 条通知未能排队；这些通知无法由应用补回。";
+        }
         statusDetail.setText(detail + "\n仅保存系统实际交付的通知内容，不读取微信私有数据库。");
     }
 
@@ -750,6 +756,42 @@ public class MainActivity extends Activity {
             .setNegativeButton("取消", null)
             .setPositiveButton("确认清空", (dialog, which) -> clearAllRecords())
             .show();
+    }
+
+    private void checkDatabaseHealth() {
+        toast("正在执行只读数据完整性检查");
+        ioExecutor.execute(() -> {
+            String result;
+            try (VaultDb db = new VaultDb(getApplicationContext())) {
+                long records = db.count();
+                long storage = db.storageBytes();
+                String integrity = db.verifyIntegrity();
+                boolean keyAliasPresent = VaultCrypto.hasKeyAlias();
+                if (!"ok".equalsIgnoreCase(integrity)) {
+                    result = "数据库结构检查未通过：SQLite 返回 " + integrity
+                            + "。应用未自动修复或修改数据，请先保留现状并导出/复制可用备份。";
+                } else if (records > 0L && !keyAliasPresent) {
+                    result = "严重警告：本机有 " + records + " 条记录，但 Android Keystore 密钥别名缺失。"
+                            + "应用已禁止自动创建替代密钥；请勿卸载应用或清除应用数据。";
+                } else {
+                    result = "SQLite 结构检查正常；记录 " + records + " 条；数据库及 WAL 占用 "
+                            + formatBytes(storage) + "。密钥别名"
+                            + (keyAliasPresent ? "存在" : "尚未创建")
+                            + "（别名存在不代表所有密文均已逐条验证）。";
+                }
+            } catch (Exception error) {
+                result = "完整性检查无法完成：" + safe(error.getMessage())
+                        + "。应用未执行修复或清空操作。";
+            }
+            final String message = result;
+            mainHandler.post(() -> {
+                if (!destroyed) new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("本地数据检查")
+                        .setMessage(message)
+                        .setPositiveButton("知道了", null)
+                        .show();
+            });
+        });
     }
 
     private void compactStorage() {
