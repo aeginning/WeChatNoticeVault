@@ -1,4 +1,4 @@
-# 微信防撤回 2.1.6
+# 微信防撤回 2.1.7
 
 Android 原生 Java 项目，面向 Android 8.0+（minSdk 26），JDK 17、AGP 8.7.3、Gradle 8.9、compileSdk 35。包名 `com.aeginning.noticevault`。
 
@@ -54,7 +54,7 @@ gradle --no-daemon testDebugUnitTest
 gradle --no-daemon assembleDebug
 ```
 
-GitHub Actions 会在 push / PR / 手动触发时执行单元测试和 Debug APK 构建，上传 `WeChatNoticeVault-2.1.4-debug-apk` artifact。
+GitHub Actions 会在 push / PR / 手动触发时执行单元测试和 Debug APK 构建，上传当前版本对应的 Debug APK、源码和测试报告 artifacts。
 
 ## 安全边界与已知限制
 
