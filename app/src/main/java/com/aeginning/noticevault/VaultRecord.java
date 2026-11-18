@@ -28,7 +28,8 @@ public class VaultRecord {
         this.packageName = packageName == null ? "" : packageName;
     }
 
-    public JSONObject toJson() throws JSONException {
+    /** Encrypted message payload excludes the separately indexed favorite bit. */
+    public JSONObject toPayloadJson() throws JSONException {
         JSONObject object = new JSONObject();
         object.put("id", id);
         object.put("timestamp", timestamp);
@@ -37,8 +38,14 @@ public class VaultRecord {
         object.put("title", title);
         object.put("text", text);
         object.put("package", packageName);
-        object.put("favorite", favorite);
         object.put("candidates", candidates == null ? new JSONArray() : candidates);
+        return object;
+    }
+
+    /** Portable backup JSON includes favorite state; the backup file is encrypted separately. */
+    public JSONObject toJson() throws JSONException {
+        JSONObject object = toPayloadJson();
+        object.put("favorite", favorite);
         return object;
     }
 
