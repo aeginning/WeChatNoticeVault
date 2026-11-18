@@ -15,6 +15,8 @@ public final class VaultPreferences {
     private static final String KEY_APP_LOCK = "device_credential_lock";
     private static final String KEY_LAST_CLEANUP = "last_retention_cleanup";
     private static final String KEY_DROPPED_NOTIFICATIONS = "dropped_notification_count";
+    private static final String KEY_THEME_MODE = "theme_mode";
+    private static final String KEY_HIDE_PREVIEW = "hide_message_preview";
     private static final long CLEANUP_INTERVAL_MS = 12L * 60L * 60L * 1000L;
 
     private VaultPreferences() { }
@@ -82,6 +84,27 @@ public final class VaultPreferences {
 
     public static long getDroppedNotificationCount(Context context) {
         return Math.max(0L, prefs(context).getLong(KEY_DROPPED_NOTIFICATIONS, 0L));
+    }
+
+    public static String getThemeMode(Context context) {
+        String mode = prefs(context).getString(KEY_THEME_MODE, "system");
+        return "light".equals(mode) || "dark".equals(mode) ? mode : "system";
+    }
+
+    public static void setThemeMode(Context context, String mode) {
+        if (!"system".equals(mode) && !"light".equals(mode) && !"dark".equals(mode)) {
+            throw new IllegalArgumentException("Unsupported theme mode");
+        }
+        prefs(context).edit().putString(KEY_THEME_MODE, mode).apply();
+    }
+
+    /** Hides conversation/title/body previews in the list, without changing stored records. */
+    public static boolean isPreviewHidden(Context context) {
+        return prefs(context).getBoolean(KEY_HIDE_PREVIEW, false);
+    }
+
+    public static void setPreviewHidden(Context context, boolean hidden) {
+        prefs(context).edit().putBoolean(KEY_HIDE_PREVIEW, hidden).apply();
     }
 
     /** Run cleanup at most twice per day, and only when the user explicitly selected a period. */

@@ -83,6 +83,17 @@ public class VaultDb extends SQLiteOpenHelper {
     public synchronized List<VaultRecord> searchPage(String query, String typeFilter,
                                                       long beforeTimestamp, long beforeId,
                                                       int limit) throws Exception {
+        return searchPage(query, typeFilter, "", 0L, beforeTimestamp, beforeId, limit);
+    }
+
+    /**
+     * Extended search. SQLite handles timestamp bounds; app package matching happens
+     * after decryption so package names are never added as plaintext database indexes.
+     */
+    public synchronized List<VaultRecord> searchPage(String query, String typeFilter,
+                                                      String packageFilter, long fromTimestamp,
+                                                      long beforeTimestamp, long beforeId,
+                                                      int limit) throws Exception {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         String needle = query == null ? "" : query.trim();
         if (needle.length() > 128) needle = needle.substring(0, 128);
@@ -92,6 +103,11 @@ public class VaultDb extends SQLiteOpenHelper {
         if (VaultRecord.MESSAGE.equals(typeFilter) || VaultRecord.REVOKE.equals(typeFilter)) {
             selection.append("type=?");
             args.add(typeFilter);
+        }
+        if (fromTimestamp > 0L) {
+            if (selection.length() > 0) selection.append(" AND ");
+            selection.append("ts >= ?");
+            args.add(String.valueOf(fromTimestamp));
         }
         if (beforeTimestamp > 0L) {
             if (selection.length() > 0) selection.append(" AND ");
@@ -112,6 +128,7 @@ public class VaultDb extends SQLiteOpenHelper {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Search cancelled");
                 VaultRecord record = decode(cursor.getBlob(1));
                 record.id = cursor.getLong(0);
+                if (!RecordFilter.matchesPackage(record.packageName, packageFilter)) continue;
                 if (!needle.isEmpty()
                         && !containsIgnoreCase(record.title, needle)
                         && !containsIgnoreCase(record.conversation, needle)
