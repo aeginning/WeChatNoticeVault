@@ -515,6 +515,7 @@ public class MainActivity extends Activity {
             scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
         });
         root.addView(advancedFilterRow, new LinearLayout.LayoutParams(-1, -2));
+        updateAdvancedFilterLabels();
 
         selectionToolbar = new LinearLayout(this);
         selectionToolbar.setOrientation(LinearLayout.HORIZONTAL);
@@ -575,7 +576,6 @@ public class MainActivity extends Activity {
         String time = dateFilterDays == 0 ? "时间：全部"
                 : dateFilterDays == 1 ? "时间：24小时"
                 : "时间：" + dateFilterDays + "天";
-        advancedFilterRow.getChildAt(0);
         ((TextView) advancedFilterRow.getChildAt(0)).setText(time);
         String source = currentPackageFilter.isEmpty() ? "来源：全部"
                 : "来源：" + applicationLabel(currentPackageFilter);
@@ -858,7 +858,12 @@ public class MainActivity extends Activity {
                 .setNegativeButton("取消", null)
                 .setPositiveButton("保存", (dialog, which) -> {
                     VaultPreferences.setAllowedPackages(this, selected);
+                    if (!currentPackageFilter.isEmpty() && !selected.contains(currentPackageFilter)) {
+                        currentPackageFilter = "";
+                    }
+                    updateAdvancedFilterLabels();
                     toast("通知来源设置已保存：" + selected.size() + " 个应用");
+                    scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
                 })
                 .show();
     }
@@ -1624,6 +1629,9 @@ public class MainActivity extends Activity {
                 || color == 0xFFE7EDF3 || color == 0xFFE2EAF2
                 || color == 0xFFE1E7EE || color == 0xFFE4EAF0) return 0xFF3A4653;
         if (color == 0xFFF3F6FA || color == 0xFFF1F4F8) return 0xFF293541;
+        if (color == 0xFFFFEEEE) return 0xFF3A292D;
+        if (color == 0xFFE9F7F0 || color == 0xFFEAF7F0) return 0xFF20382F;
+        if (color == 0xFFE9EEF4) return 0xFF293541;
         if (color == 0xFFFFF8F8) return 0xFF33272B;
         return color;
     }
