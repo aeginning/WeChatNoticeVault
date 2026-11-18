@@ -32,6 +32,8 @@ jobs:
         run: gradle --no-daemon testDebugUnitTest
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
+      - name: Verify Release variant configuration (unsigned smoke build)
+        run: gradle --no-daemon assembleRelease
       - name: Package source archive
         run: git archive --format=zip --output "$RUNNER_TEMP/WeChatNoticeVault-2.3.0-source.zip" HEAD
       - name: Upload source archive
