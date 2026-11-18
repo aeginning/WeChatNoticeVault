@@ -459,6 +459,10 @@ public class MainActivity extends Activity {
         recordCount = text("准备就绪", 11, COLOR_MUTED, false);
         recordCount.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         heading.addView(recordCount);
+        manageRecordsView = text("管理", 12, COLOR_BLUE, true);
+        manageRecordsView.setPadding(dp(10), dp(6), dp(4), dp(6));
+        manageRecordsView.setOnClickListener(view -> setSelectionMode(!selectionMode));
+        heading.addView(manageRecordsView);
         root.addView(heading);
 
         LinearLayout searchCard = new LinearLayout(this);
@@ -497,6 +501,31 @@ public class MainActivity extends Activity {
         addFilterChip("普通消息", VaultRecord.MESSAGE);
         addFilterChip("撤回提示", VaultRecord.REVOKE);
         root.addView(filterRow, new LinearLayout.LayoutParams(-1, -2));
+
+        advancedFilterRow = new LinearLayout(this);
+        advancedFilterRow.setOrientation(LinearLayout.HORIZONTAL);
+        advancedFilterRow.setGravity(Gravity.CENTER_VERTICAL);
+        advancedFilterRow.setPadding(0, 0, 0, dp(8));
+        addAdvancedFilterButton("时间：全部", this::showDateFilterDialog);
+        addAdvancedFilterButton("来源：全部", this::showPackageFilterDialog);
+        addAdvancedFilterButton("☆ 收藏", () -> {
+            favoriteOnlyFilter = !favoriteOnlyFilter;
+            updateAdvancedFilterLabels();
+            scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
+        });
+        root.addView(advancedFilterRow, new LinearLayout.LayoutParams(-1, -2));
+
+        selectionToolbar = new LinearLayout(this);
+        selectionToolbar.setOrientation(LinearLayout.HORIZONTAL);
+        selectionToolbar.setGravity(Gravity.CENTER_VERTICAL);
+        selectionToolbar.setPadding(0, 0, 0, dp(8));
+        addSelectionAction("全选已加载", this::selectAllLoaded);
+        addSelectionAction("收藏", () -> applySelectionFavorite(true));
+        addSelectionAction("取消收藏", () -> applySelectionFavorite(false));
+        addSelectionAction("删除", this::confirmDeleteSelected);
+        addSelectionAction("完成", () -> setSelectionMode(false));
+        selectionToolbar.setVisibility(View.GONE);
+        root.addView(selectionToolbar, new LinearLayout.LayoutParams(-1, -2));
 
         recordList = new LinearLayout(this);
         recordList.setOrientation(LinearLayout.VERTICAL);
