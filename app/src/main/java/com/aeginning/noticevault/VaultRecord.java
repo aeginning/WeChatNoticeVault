@@ -15,6 +15,7 @@ public class VaultRecord {
     public String title;
     public String text;
     public String packageName;
+    public boolean favorite;
     public JSONArray candidates = new JSONArray();
 
     public VaultRecord(long timestamp, String type, String conversation, String title,
@@ -36,6 +37,7 @@ public class VaultRecord {
         object.put("title", title);
         object.put("text", text);
         object.put("package", packageName);
+        object.put("favorite", favorite);
         object.put("candidates", candidates == null ? new JSONArray() : candidates);
         return object;
     }
@@ -47,6 +49,7 @@ public class VaultRecord {
                 object.optString("conversation", ""), object.optString("title", ""),
                 object.optString("text", ""), object.optString("package", ""));
         record.id = object.optLong("id", -1L);
+        record.favorite = object.optBoolean("favorite", false);
         JSONArray candidateArray = object.optJSONArray("candidates");
         record.candidates = candidateArray == null ? new JSONArray() : candidateArray;
         return record;
