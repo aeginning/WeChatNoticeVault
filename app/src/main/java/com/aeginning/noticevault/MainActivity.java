@@ -1139,8 +1139,8 @@ public class MainActivity extends Activity {
     private void scheduleSearch(String query) {
         if (destroyed || recordList == null) return;
         currentQuery = query == null ? "" : query.trim();
-        currentSinceTimestamp = dateFilterDays <= 0 ? 0L
-                : Math.max(0L, System.currentTimeMillis() - dateFilterDays * 24L * 60L * 60L * 1000L);
+        currentSinceTimestamp = RecordTimeFilter.sinceTimestamp(
+                dateFilterDays, System.currentTimeMillis());
         selectedRecordIds.clear();
         visibleRecords.clear();
         updateSelectionCount();
