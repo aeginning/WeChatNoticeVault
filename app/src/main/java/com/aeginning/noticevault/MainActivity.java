@@ -415,10 +415,6 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
-    private LinearLayout buildMetricsCardPlaceholder() {
-        return new LinearLayout(this);
-    }
-
     private void buildMetricsCard(LinearLayout root) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
@@ -1234,14 +1230,15 @@ public class MainActivity extends Activity {
             final String errorMessage = failure;
             mainHandler.post(() -> {
                 if (destroyed) return;
-                selectionMode = false;
-                selectedRecordIds.clear();
-                refreshSelectionToolbar();
                 if (errorMessage == null) {
+                    selectionMode = false;
+                    selectedRecordIds.clear();
+                    refreshSelectionToolbar();
                     toast("已删除 " + deletedCount + " 条记录");
                     refreshMetrics();
                     scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
                 } else {
+                    // Keep the selected IDs so the user can retry or inspect the failed operation.
                     toast("批量删除失败：" + safe(errorMessage));
                     refreshSelectionToolbar();
                 }
@@ -1268,7 +1265,7 @@ public class MainActivity extends Activity {
                     if (destroyed) return;
                     action.setEnabled(true);
                     if (!success) {
-                        toast("收藏状态保存失败：" + safe(failure));
+                        toast("收藏状态保存失败：" + (failure == null ? "记录不存在或已删除" : safe(failure)));
                         return;
                     }
                     record.favorite = target;
