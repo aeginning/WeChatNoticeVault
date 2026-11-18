@@ -1,5 +1,17 @@
 plugins { id 'com.android.application' }
 
+// Release signing material is supplied only by the environment or GitHub Actions Secrets.
+def releaseStoreFilePath = System.getenv('RELEASE_STORE_FILE')
+def releaseStorePasswordValue = System.getenv('RELEASE_STORE_PASSWORD')
+def releaseKeyAliasValue = System.getenv('RELEASE_KEY_ALIAS')
+def releaseKeyPasswordValue = System.getenv('RELEASE_KEY_PASSWORD')
+def releaseSigningReady = [releaseStoreFilePath, releaseStorePasswordValue, releaseKeyAliasValue, releaseKeyPasswordValue].every { value ->
+    value != null && !value.trim().isEmpty()
+}
+if (System.getenv('REQUIRE_RELEASE_SIGNING') == 'true' && !releaseSigningReady) {
+    throw new GradleException('Release signing secrets are missing; refusing to build an unsigned release.')
+}
+
 android {
     namespace 'com.aeginning.noticevault'
     compileSdk 35
@@ -9,8 +21,28 @@ android {
         applicationId 'com.aeginning.noticevault'
         minSdk 26
         targetSdk 35
-        versionCode 220
-        versionName '2.2.0'
+        versionCode 230
+        versionName '2.3.0'
+    }
+
+    signingConfigs {
+        release {
+            if (releaseSigningReady) {
+                storeFile file(releaseStoreFilePath)
+                storePassword releaseStorePasswordValue
+                keyAlias releaseKeyAliasValue
+                keyPassword releaseKeyPasswordValue
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (releaseSigningReady) {
+                signingConfig signingConfigs.release
+            }
+        }
     }
 }
 
