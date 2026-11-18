@@ -37,4 +37,16 @@ public class PayloadCompressionTest {
         // Compression helper is lossless even when the caller decides not to use its output.
         assertArrayEquals(plain, PayloadCompression.decompress(compressed, 8192));
     }
+
+    @Test
+    public void acceptsPayloadAtExactDecompressionLimit() throws Exception {
+        byte[] plain = "boundary".getBytes(StandardCharsets.UTF_8);
+        byte[] compressed = PayloadCompression.compress(plain);
+        assertArrayEquals(plain, PayloadCompression.decompress(compressed, plain.length));
+    }
+
+    @Test(expected = IOException.class)
+    public void rejectsMalformedCompressedPayload() throws Exception {
+        PayloadCompression.decompress(new byte[]{1, 2, 3, 4}, 1024);
+    }
 }
