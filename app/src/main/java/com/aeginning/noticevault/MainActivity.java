@@ -72,6 +72,7 @@ public class MainActivity extends Activity {
     private TextView selectionSummary;
     private TextView selectionDeleteAction;
     private TextView backupReminderBanner;
+    private TextView backupReminderSettingsValue;
     private TextView recordCount;
     private EditText searchInput;
     private TextView notificationValue;
@@ -341,6 +342,9 @@ public class MainActivity extends Activity {
     }
 
     private void refreshBackupReminderBanner() {
+        if (backupReminderSettingsValue != null) {
+            backupReminderSettingsValue.setText(backupReminderLabel());
+        }
         if (backupReminderBanner == null) return;
         if (!VaultPreferences.isBackupReminderDue(this, System.currentTimeMillis())) {
             backupReminderBanner.setVisibility(View.GONE);
@@ -537,6 +541,7 @@ public class MainActivity extends Activity {
         card.addView(labels, labelsLp);
         labels.addView(text(title, 14, COLOR_TEXT, true));
         TextView sub = text(subtitle, 11, COLOR_MUTED, false);
+        if ("自动备份提醒".equals(title)) backupReminderSettingsValue = sub;
         sub.setMaxLines(2);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
         subLp.topMargin = dp(4);

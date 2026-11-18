@@ -217,12 +217,17 @@ public class VaultDb extends SQLiteOpenHelper {
         if (id <= 0L) return false;
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
-        try (Cursor cursor = db.query("records", new String[]{"payload"},
-                "_id=?", new String[]{String.valueOf(id)}, null, null, null, "1")) {
-            if (!cursor.moveToFirst()) return false;
-            VaultRecord record = decode(cursor.getBlob(0));
+        try {
+            VaultRecord record = null;
+            try (Cursor cursor = db.query("records", new String[]{"payload"},
+                    "_id=?", new String[]{String.valueOf(id)}, null, null, null, "1")) {
+                if (cursor.moveToFirst()) {
+                    record = decode(cursor.getBlob(0));
+                    record.id = id;
+                }
+            }
+            if (record == null) return false;
             if (record.favorite != favorite) {
-                record.id = id;
                 record.favorite = favorite;
                 updatePayload(db, record);
             }
