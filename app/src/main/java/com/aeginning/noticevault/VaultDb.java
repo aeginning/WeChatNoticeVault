@@ -140,12 +140,13 @@ public class VaultDb extends SQLiteOpenHelper {
 
     private List<VaultRecord> queryAll() throws Exception {
         List<VaultRecord> records = new ArrayList<>();
-        Cursor cursor = getReadableDatabase().query("records", new String[]{"_id", "payload"},
+        Cursor cursor = getReadableDatabase().query("records", new String[]{"_id", "payload", "favorite"},
                 null, null, null, null, "ts DESC", String.valueOf(MAX_RECORDS));
         try {
             while (cursor.moveToNext()) {
                 VaultRecord record = decode(cursor.getBlob(1));
                 record.id = cursor.getLong(0);
+                record.favorite = cursor.getInt(2) != 0;
                 records.add(record);
             }
         } finally {
@@ -181,6 +182,57 @@ public class VaultDb extends SQLiteOpenHelper {
         java.io.File walFile = new java.io.File(databaseFile.getPath() + "-wal");
         java.io.File shmFile = new java.io.File(databaseFile.getPath() + "-shm");
         return databaseFile.length() + walFile.length() + shmFile.length();
+    }
+
+    public synchronized int setFavorite(long id, boolean favorite) {
+        if (id <= 0L) return 0;
+        ContentValues values = new ContentValues();
+        values.put("favorite", favorite ? 1 : 0);
+        return getWritableDatabase().update("records", values, "_id=?",
+                new String[]{String.valueOf(id)});
+    }
+
+    /** Update favorite metadata for a bounded set of IDs without decrypting message bodies. */
+    public synchronized int setFavorites(long[] ids, boolean favorite) {
+        if (ids == null || ids.length == 0) return 0;
+        StringBuilder selection = new StringBuilder("_id IN (");
+        String[] args = new String[ids.length];
+        int count = 0;
+        for (long id : ids) {
+            if (id <= 0L) continue;
+            if (count > 0) selection.append(',');
+            selection.append('?');
+            args[count++] = String.valueOf(id);
+        }
+        if (count == 0) return 0;
+        selection.append(')');
+        if (count != args.length) args = java.util.Arrays.copyOf(args, count);
+        ContentValues values = new ContentValues();
+        values.put("favorite", favorite ? 1 : 0);
+        return getWritableDatabase().update("records", values, selection.toString(), args);
+    }
+
+    /** Delete only explicitly selected IDs; empty or invalid input is a no-op. */
+    public synchronized int deleteRecords(long[] ids) {
+        if (ids == null || ids.length == 0) return 0;
+        StringBuilder selection = new StringBuilder("_id IN (");
+        String[] args = new String[ids.length];
+        int count = 0;
+        for (long id : ids) {
+            if (id <= 0L) continue;
+            if (count > 0) selection.append(',');
+            selection.append('?');
+            args[count++] = String.valueOf(id);
+        }
+        if (count == 0) return 0;
+        selection.append(')');
+        if (count != args.length) args = java.util.Arrays.copyOf(args, count);
+        return getWritableDatabase().delete("records", selection.toString(), args);
+    }
+
+    public synchronized long countFavorites() {
+        return DatabaseUtils.longForQuery(getReadableDatabase(),
+                "SELECT COUNT(*) FROM records WHERE favorite=1", null);
     }
 
     public synchronized long countSince(long timestamp) {
@@ -333,13 +385,14 @@ public class VaultDb extends SQLiteOpenHelper {
             throw new IllegalStateException("本机记录超过 10,000 条，请先设置保留期限或清理数据后再导出");
         }
         JSONArray array = new JSONArray();
-        Cursor cursor = getReadableDatabase().query("records", new String[]{"_id", "payload"},
+        Cursor cursor = getReadableDatabase().query("records", new String[]{"_id", "payload", "favorite"},
                 null, null, null, null, "ts DESC, _id DESC", String.valueOf(MAX_RECORDS));
         try {
             while (cursor.moveToNext()) {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Export cancelled");
                 VaultRecord record = decode(cursor.getBlob(1));
                 record.id = cursor.getLong(0);
+                record.favorite = cursor.getInt(2) != 0;
                 array.put(record.toJson());
             }
         } finally {
