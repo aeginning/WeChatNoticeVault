@@ -22,7 +22,7 @@ import org.json.JSONObject;
  */
 public class VaultDb extends SQLiteOpenHelper {
     private static final String DB = "noticevault.db";
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
     private static final int MAX_RECORDS = 10000;
     private final Context appContext;
 
@@ -35,9 +35,10 @@ public class VaultDb extends SQLiteOpenHelper {
     @Override
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE records (_id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                + "ts INTEGER NOT NULL, type TEXT NOT NULL, payload BLOB NOT NULL)");
+                + "ts INTEGER NOT NULL, type TEXT NOT NULL, favorite INTEGER NOT NULL DEFAULT 0, payload BLOB NOT NULL)");
         db.execSQL("CREATE INDEX idx_records_ts ON records(ts DESC)");
         db.execSQL("CREATE INDEX idx_records_type_ts ON records(type, ts DESC, _id DESC)");
+        db.execSQL("CREATE INDEX idx_records_favorite_ts ON records(favorite, ts DESC, _id DESC)");
     }
 
     @Override
@@ -45,6 +46,11 @@ public class VaultDb extends SQLiteOpenHelper {
         // Version 2 adds a non-destructive composite index; existing rows and ciphertext are untouched.
         if (oldVersion < 2) {
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_records_type_ts ON records(type, ts DESC, _id DESC)");
+        }
+        if (oldVersion < 3) {
+            // Existing rows and encrypted payloads are untouched; legacy rows are not favorites.
+            db.execSQL("ALTER TABLE records ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_records_favorite_ts ON records(favorite, ts DESC, _id DESC)");
         }
     }
 
@@ -63,6 +69,7 @@ public class VaultDb extends SQLiteOpenHelper {
             ContentValues values = new ContentValues();
             values.put("ts", record.timestamp);
             values.put("type", record.type);
+            values.put("favorite", record.favorite ? 1 : 0);
             values.put("payload", encrypted);
             return db.insertOrThrow("records", null, values);
         } finally {
@@ -83,6 +90,13 @@ public class VaultDb extends SQLiteOpenHelper {
     public synchronized List<VaultRecord> searchPage(String query, String typeFilter,
                                                       long beforeTimestamp, long beforeId,
                                                       int limit) throws Exception {
+        return searchPage(query, typeFilter, 0L, "", false, beforeTimestamp, beforeId, limit);
+    }
+
+    public synchronized List<VaultRecord> searchPage(String query, String typeFilter,
+                                                      long sinceTimestamp, String packageFilter,
+                                                      boolean favoriteOnly, long beforeTimestamp,
+                                                      long beforeId, int limit) throws Exception {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         String needle = query == null ? "" : query.trim();
         if (needle.length() > 128) needle = needle.substring(0, 128);
@@ -92,6 +106,15 @@ public class VaultDb extends SQLiteOpenHelper {
         if (VaultRecord.MESSAGE.equals(typeFilter) || VaultRecord.REVOKE.equals(typeFilter)) {
             selection.append("type=?");
             args.add(typeFilter);
+        }
+        if (sinceTimestamp > 0L) {
+            if (selection.length() > 0) selection.append(" AND ");
+            selection.append("ts >= ?");
+            args.add(String.valueOf(sinceTimestamp));
+        }
+        if (favoriteOnly) {
+            if (selection.length() > 0) selection.append(" AND ");
+            selection.append("favorite=1");
         }
         if (beforeTimestamp > 0L) {
             if (selection.length() > 0) selection.append(" AND ");
@@ -103,7 +126,7 @@ public class VaultDb extends SQLiteOpenHelper {
 
         List<VaultRecord> result = new ArrayList<>(safeLimit);
         Cursor cursor = getReadableDatabase().query(
-                "records", new String[]{"_id", "payload"},
+                "records", new String[]{"_id", "payload", "favorite"},
                 selection.length() == 0 ? null : selection.toString(),
                 args.isEmpty() ? null : args.toArray(new String[0]),
                 null, null, "ts DESC, _id DESC", null);
@@ -112,6 +135,9 @@ public class VaultDb extends SQLiteOpenHelper {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Search cancelled");
                 VaultRecord record = decode(cursor.getBlob(1));
                 record.id = cursor.getLong(0);
+                record.favorite = cursor.getInt(2) != 0;
+                if (packageFilter != null && !packageFilter.isEmpty()
+                        && !packageFilter.equals(record.packageName)) continue;
                 if (!needle.isEmpty()
                         && !containsIgnoreCase(record.title, needle)
                         && !containsIgnoreCase(record.conversation, needle)
