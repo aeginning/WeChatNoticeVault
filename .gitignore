@@ -3,3 +3,9 @@
 local.properties
 **/build/
 .DS_Store
+
+# Never commit Android signing material
+*.jks
+*.keystore
+*.p12
+*.pfx
