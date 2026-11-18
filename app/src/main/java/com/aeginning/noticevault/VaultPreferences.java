@@ -14,6 +14,7 @@ public final class VaultPreferences {
     private static final String KEY_RETENTION_DAYS = "retention_days";
     private static final String KEY_APP_LOCK = "device_credential_lock";
     private static final String KEY_LAST_CLEANUP = "last_retention_cleanup";
+    private static final String KEY_DROPPED_NOTIFICATIONS = "dropped_notification_count";
     private static final long CLEANUP_INTERVAL_MS = 12L * 60L * 60L * 1000L;
 
     private VaultPreferences() { }
@@ -69,6 +70,18 @@ public final class VaultPreferences {
 
     public static void setAppLockEnabled(Context context, boolean enabled) {
         prefs(context).edit().putBoolean(KEY_APP_LOCK, enabled).apply();
+    }
+
+    /** Count notifications rejected because the bounded persistence queue was full. */
+    public static synchronized void recordDroppedNotification(Context context) {
+        SharedPreferences p = prefs(context);
+        long current = p.getLong(KEY_DROPPED_NOTIFICATIONS, 0L);
+        long next = current == Long.MAX_VALUE ? Long.MAX_VALUE : current + 1L;
+        p.edit().putLong(KEY_DROPPED_NOTIFICATIONS, next).apply();
+    }
+
+    public static long getDroppedNotificationCount(Context context) {
+        return Math.max(0L, prefs(context).getLong(KEY_DROPPED_NOTIFICATIONS, 0L));
     }
 
     /** Run cleanup at most twice per day, and only when the user explicitly selected a period. */
