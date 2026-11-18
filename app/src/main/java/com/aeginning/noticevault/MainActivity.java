@@ -131,6 +131,14 @@ public class MainActivity extends Activity {
 
     @Override
     public void onCreate(Bundle state) {
+        String themeMode = VaultPreferences.getThemeMode(this);
+        int systemNight = getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        boolean useDarkTheme = VaultPreferences.THEME_DARK.equals(themeMode)
+                || (VaultPreferences.THEME_SYSTEM.equals(themeMode)
+                && systemNight == android.content.res.Configuration.UI_MODE_NIGHT_YES);
+        setTheme(useDarkTheme ? android.R.style.Theme_Material_NoActionBar
+                : android.R.style.Theme_Material_Light_NoActionBar);
         super.onCreate(state);
         Shizuku.addRequestPermissionResultListener(permissionListener);
         configureTheme();
@@ -224,7 +232,7 @@ public class MainActivity extends Activity {
         top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
 
         TextView version = new TextView(this);
-        version.setText("VERSION 2.1.8");
+        version.setText("VERSION 2.1.9");
         version.setTextColor(Color.WHITE);
         version.setTextSize(10);
         version.setLetterSpacing(0.06f);
@@ -718,9 +726,10 @@ public class MainActivity extends Activity {
                 mainHandler.post(() -> toast(message));
                 return;
             }
-            if (changed > 0) record.favorite = favorite;
+            final boolean updated = changed > 0;
             mainHandler.post(() -> {
                 if (destroyed) return;
+                if (updated) record.favorite = favorite;
                 toast(favorite ? "已加入收藏" : "已取消收藏");
                 scheduleSearch(searchInput == null ? "" : searchInput.getText().toString());
             });
