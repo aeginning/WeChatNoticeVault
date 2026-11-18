@@ -130,6 +130,7 @@ public class VaultDb extends SQLiteOpenHelper {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Search cancelled");
                 VaultRecord record = decode(cursor.getBlob(1));
                 record.id = cursor.getLong(0);
+                if ("favorite".equals(typeFilter) && !record.favorite) continue;
                 if (!RecordFilter.matchesPackage(record.packageName, packageFilter)) continue;
                 if (!needle.isEmpty()
                         && !containsIgnoreCase(record.title, needle)
@@ -209,6 +210,59 @@ public class VaultDb extends SQLiteOpenHelper {
 
     public synchronized int deleteOlderThan(long cutoff) {
         return getWritableDatabase().delete("records", "ts < ?", new String[]{String.valueOf(cutoff)});
+    }
+
+    /** Updates the favorite flag inside the AES-GCM encrypted payload, without schema changes. */
+    public synchronized boolean setFavorite(long id, boolean favorite) throws Exception {
+        if (id <= 0L) return false;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try (Cursor cursor = db.query("records", new String[]{"payload"},
+                "_id=?", new String[]{String.valueOf(id)}, null, null, null, "1")) {
+            if (!cursor.moveToFirst()) return false;
+            VaultRecord record = decode(cursor.getBlob(0));
+            if (record.favorite != favorite) {
+                record.id = id;
+                record.favorite = favorite;
+                updatePayload(db, record);
+            }
+            db.setTransactionSuccessful();
+            return true;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** Deletes only explicitly selected row IDs in one transaction, with bound arguments. */
+    public synchronized int deleteRecords(List<Long> recordIds) {
+        if (recordIds == null || recordIds.isEmpty()) return 0;
+        java.util.LinkedHashSet<Long> unique = new java.util.LinkedHashSet<>();
+        for (Long id : recordIds) {
+            if (id == null || id <= 0L) continue;
+            unique.add(id);
+            if (unique.size() > 100) throw new IllegalArgumentException("一次最多删除 100 条已选记录");
+        }
+        if (unique.isEmpty()) return 0;
+
+        StringBuilder selection = new StringBuilder("_id IN (");
+        String[] args = new String[unique.size()];
+        int index = 0;
+        for (Long id : unique) {
+            if (index > 0) selection.append(',');
+            selection.append('?');
+            args[index++] = String.valueOf(id);
+        }
+        selection.append(')');
+
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            int deleted = db.delete("records", selection.toString(), args);
+            db.setTransactionSuccessful();
+            return deleted;
+        } finally {
+            db.endTransaction();
+        }
     }
 
     public synchronized long saveWithRevokeLink(VaultRecord record) throws Exception {

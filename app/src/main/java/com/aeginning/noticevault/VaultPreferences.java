@@ -17,6 +17,8 @@ public final class VaultPreferences {
     private static final String KEY_DROPPED_NOTIFICATIONS = "dropped_notification_count";
     private static final String KEY_THEME_MODE = "theme_mode";
     private static final String KEY_HIDE_PREVIEW = "hide_message_preview";
+    private static final String KEY_BACKUP_REMINDER_DAYS = "backup_reminder_days";
+    private static final String KEY_LAST_SUCCESSFUL_BACKUP = "last_successful_backup";
     private static final long CLEANUP_INTERVAL_MS = 12L * 60L * 60L * 1000L;
 
     private VaultPreferences() { }
@@ -105,6 +107,34 @@ public final class VaultPreferences {
 
     public static void setPreviewHidden(Context context, boolean hidden) {
         prefs(context).edit().putBoolean(KEY_HIDE_PREVIEW, hidden).apply();
+    }
+
+    /** Backup reminders are in-app prompts, shown when the user opens the app. */
+    public static int getBackupReminderDays(Context context) {
+        int days = prefs(context).getInt(KEY_BACKUP_REMINDER_DAYS, 0);
+        return days >= 1 && days <= 365 ? days : 0;
+    }
+
+    /** Set 0 to disable; enabled intervals are limited to 1–365 days. */
+    public static void setBackupReminderDays(Context context, int days) {
+        if (days < 0 || days > 365) {
+            throw new IllegalArgumentException("备份提醒间隔必须为 1–365 天，或设为 0 关闭");
+        }
+        prefs(context).edit().putInt(KEY_BACKUP_REMINDER_DAYS, days).apply();
+    }
+
+    public static long getLastSuccessfulBackup(Context context) {
+        return Math.max(0L, prefs(context).getLong(KEY_LAST_SUCCESSFUL_BACKUP, 0L));
+    }
+
+    /** Call only after the encrypted backup output stream was fully written and closed. */
+    public static void markBackupSucceeded(Context context, long timestamp) {
+        if (timestamp > 0L) prefs(context).edit().putLong(KEY_LAST_SUCCESSFUL_BACKUP, timestamp).apply();
+    }
+
+    public static boolean isBackupReminderDue(Context context, long now) {
+        return BackupReminderPolicy.isDue(getBackupReminderDays(context),
+                getLastSuccessfulBackup(context), now);
     }
 
     /** Run cleanup at most twice per day, and only when the user explicitly selected a period. */
