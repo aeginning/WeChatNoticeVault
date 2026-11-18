@@ -56,7 +56,7 @@ public class VaultDb extends SQLiteOpenHelper {
 
     public synchronized long insert(VaultRecord record) throws Exception {
         validateRecord(record);
-        byte[] plain = record.toJson().toString().getBytes(StandardCharsets.UTF_8);
+        byte[] plain = record.toPayloadJson().toString().getBytes(StandardCharsets.UTF_8);
         byte[] encrypted = null;
         try {
             SQLiteDatabase db = getWritableDatabase();
@@ -393,7 +393,7 @@ public class VaultDb extends SQLiteOpenHelper {
     }
 
     private void updatePayload(SQLiteDatabase db, VaultRecord record) throws Exception {
-        byte[] plain = record.toJson().toString().getBytes(StandardCharsets.UTF_8);
+        byte[] plain = record.toPayloadJson().toString().getBytes(StandardCharsets.UTF_8);
         byte[] encrypted = null;
         try {
             encrypted = VaultCrypto.encrypt(plain, false);
