@@ -1315,16 +1315,38 @@ public class MainActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(size);
-        view.setTextColor(color);
+        view.setTextColor(resolveTextColor(color));
         if (bold) view.setTypeface(MEDIUM_TYPEFACE);
         return view;
     }
 
+    private int resolveTextColor(int color) {
+        if (!darkTheme) return color;
+        if (color == Color.WHITE) return Color.WHITE;
+        if (color == COLOR_TEXT) return 0xFFE8EDF4;
+        if (color == COLOR_MUTED) return 0xFFADB9C6;
+        if (color == 0xFF44566B) return 0xFFD0D9E2;
+        if (color == 0xFF9B6A6E) return 0xFFFFB5BA;
+        return color;
+    }
+
+    private int resolveSurfaceColor(int color) {
+        if (!darkTheme) return color;
+        if (color == Color.WHITE) return 0xFF202A35;
+        if (color == COLOR_BG) return 0xFF111820;
+        if (color == 0xFFE8EDF3 || color == 0xFFE3EAF1
+                || color == 0xFFE7EDF3 || color == 0xFFE2EAF2
+                || color == 0xFFE1E7EE || color == 0xFFE4EAF0) return 0xFF3A4653;
+        if (color == 0xFFF3F6FA || color == 0xFFF1F4F8) return 0xFF293541;
+        if (color == 0xFFFFF8F8) return 0xFF33272B;
+        return color;
+    }
+
     private GradientDrawable roundBackground(int color, int radius, int strokeColor, int strokeWidth) {
         GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(color);
+        drawable.setColor(resolveSurfaceColor(color));
         drawable.setCornerRadius(radius);
-        if (strokeWidth > 0) drawable.setStroke(strokeWidth, strokeColor);
+        if (strokeWidth > 0) drawable.setStroke(strokeWidth, resolveSurfaceColor(strokeColor));
         return drawable;
     }
 
