@@ -1,5 +1,12 @@
 plugins { id 'com.android.application' }
 
+def releaseStoreFile = System.getenv('RELEASE_STORE_FILE')
+def releaseStorePassword = System.getenv('RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = System.getenv('RELEASE_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('RELEASE_KEY_PASSWORD')
+def releaseSigningReady = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
+        .every { value -> value != null && !value.trim().isEmpty() }
+
 android {
     namespace 'com.aeginning.noticevault'
     compileSdk 35
@@ -9,8 +16,28 @@ android {
         applicationId 'com.aeginning.noticevault'
         minSdk 26
         targetSdk 35
-        versionCode 218
-        versionName '2.1.8'
+        versionCode 219
+        versionName '2.1.9'
+    }
+
+    signingConfigs {
+        release {
+            if (releaseSigningReady) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (releaseSigningReady) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled false
+        }
     }
 }
 
