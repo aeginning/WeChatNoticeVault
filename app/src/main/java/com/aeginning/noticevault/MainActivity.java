@@ -863,6 +863,19 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    private void showThemeDialog() {
+        String current = VaultPreferences.getThemeMode(this);
+        String[] modes = new String[]{VaultPreferences.THEME_SYSTEM, VaultPreferences.THEME_LIGHT, VaultPreferences.THEME_DARK};
+        CharSequence[] labels = new CharSequence[]{"跟随系统", "浅色模式", "深色模式"};
+        int selected = VaultPreferences.THEME_LIGHT.equals(current) ? 1
+                : VaultPreferences.THEME_DARK.equals(current) ? 2 : 0;
+        new AlertDialog.Builder(this).setTitle("界面主题")
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    VaultPreferences.setThemeMode(this, modes[which]);
+                    dialog.dismiss();
+                    recreate();
+                }).setNegativeButton("取消", null).show();
+    }
     private void showRetentionDialog() {
         final int[] retentionDays = new int[]{0, 7, 30, 90};
         CharSequence[] labels = new CharSequence[]{"关闭自动清理（永久保留）", "保留 7 天", "保留 30 天", "保留 90 天"};
@@ -1487,6 +1500,7 @@ public class MainActivity extends Activity {
                             output.write(packed);
                             output.flush();
                         }
+                        VaultPreferences.setLastBackupTime(appContext, System.currentTimeMillis());
                         message = "加密备份导出成功（" + records.length() + " 条）";
                     } else {
                         try (InputStream stream = resolver.openInputStream(uri)) {
@@ -1546,6 +1560,29 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void maybeShowBackupReminder() {
+        if (destroyed || backupRunning || VaultPreferences.isAppLockEnabled(this) && !appUnlockedForSession) return;
+        ioExecutor.execute(() -> {
+            boolean shouldRemind = false;
+            try (VaultDb db = new VaultDb(getApplicationContext())) {
+                shouldRemind = VaultPreferences.shouldShowBackupReminder(
+                        getApplicationContext(), System.currentTimeMillis(), db.count() > 0L);
+            } catch (Exception ignored) {
+                return;
+            }
+            if (!shouldRemind) return;
+            mainHandler.post(() -> {
+                if (destroyed || isFinishing() || backupRunning) return;
+                VaultPreferences.markBackupReminderShown(MainActivity.this, System.currentTimeMillis());
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("重要消息备份提醒")
+                        .setMessage("本机已有留存消息，但最近 7 天没有成功导出加密备份。建议定期保存 .nvbk 文件，并妥善保管备份密码。")
+                        .setPositiveButton("现在备份", (dialog, which) -> passwordDialog(true))
+                        .setNegativeButton("稍后提醒", null)
+                        .show();
+            });
+        });
+    }
     private static byte[] readAllLimited(InputStream stream, int maxBytes) throws Exception {
         try (InputStream input = stream; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
@@ -1633,6 +1670,7 @@ public class MainActivity extends Activity {
         if (!VaultPreferences.isAppLockEnabled(this) || appUnlockedForSession) {
             refreshMetrics();
             if (searchInput != null) scheduleSearch(searchInput.getText().toString());
+            maybeShowBackupReminder();
         }
     }
 
