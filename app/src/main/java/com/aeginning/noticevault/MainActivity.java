@@ -155,7 +155,7 @@ public class MainActivity extends Activity {
         buildMetricsCard(root);
         addSectionHeading(root, "权限与运行", "完成基础授权，让消息留存持续运行");
         addActionCard(root, "◉", "开启通知监听权限", "允许系统将可见通知交给本应用处理", COLOR_BLUE,
-            () -> startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
+            this::openNotificationListenerSettings);
         addActionCard(root, "⌘", "检查 / 申请 Shizuku 权限", "无线调试启动 · 无需 Root", COLOR_GREEN, this::requestShizuku);
         addActionCard(root, "⚙", "电池优化设置", "检查系统后台限制，减少进程被停止的情况", COLOR_MUTED, this::openBatterySettings);
 
@@ -487,6 +487,28 @@ public class MainActivity extends Activity {
             }
             return false;
         });
+    }
+
+    /**
+     * Open the system notification-listener permission page.
+     * Some vendor ROMs do not expose the dedicated settings activity; fall back
+     * to the main Settings screen instead of letting ActivityNotFoundException
+     * crash the app.
+     */
+    private void openNotificationListenerSettings() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (RuntimeException error) {
+            try {
+                startActivity(new Intent(Settings.ACTION_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                toast("系统未提供通知监听专用页面，已打开系统设置，请手动搜索“通知使用权”或“通知访问权限”");
+            } catch (RuntimeException fallbackError) {
+                toast("无法打开系统设置，请在手机设置中搜索“通知使用权”或“通知访问权限”");
+            }
+        }
     }
 
     private void refreshStatus() {
