@@ -1,4 +1,4 @@
-# 微信防撤回 2.2.0
+# 微信防撤回 2.3.0
 
 Android 原生 Java 项目，面向 Android 8.0+（minSdk 26），JDK 17、AGP 8.7.3、Gradle 8.9、compileSdk 35。包名 `com.aeginning.noticevault`。
 
@@ -30,7 +30,10 @@ Android 原生 Java 项目，面向 Android 8.0+（minSdk 26），JDK 17、AGP 8
 - **本地数据加密**：消息记录字段使用 Android Keystore 管理的 AES-256-GCM 密钥逐条加密。SQLite 中的时间戳、记录类型和行 ID 保留为索引元数据；本项目不是 SQLCipher 整库加密。
 - **自动清理**：用户可选永久保留、7 天、30 天或 90 天。默认关闭自动清理；开启后约每 12 小时执行一次过期记录清理。
 - **设备锁保护**：可要求使用 Android 系统设备凭据验证；应用启用 `FLAG_SECURE` 隐藏最近任务缩略图。
-- **消息详情与复制**：点击列表记录可查看完整通知内容并复制。
+- **消息详情与复制二次确认**：复制前显示内容预览，并要求用户二次确认后才写入系统剪贴板。
+- **收藏重要消息**：每条记录支持收藏/取消收藏，并可按“收藏”筛选；收藏标志写入现有 AES-GCM 加密载荷，旧记录默认未收藏，不增加明文数据库列。
+- **多选批量删除**：长按消息进入选择模式，可选择已加载记录并按批次删除；删除前再次确认，单次最多 100 条，使用 SQLite 事务和绑定参数。
+- **自动备份提醒**：可设置 1–365 天提醒周期，按最近一次成功完成的加密备份计算；提醒在应用打开时显示，不申请后台通知权限、不在后台弹系统通知。
 - **加密备份/恢复**：`.nvbk` 使用 PBKDF2-HMAC-SHA256（210,000 次迭代）派生 256 位密钥，再用 AES-256-GCM 加密。新备份包含格式版本号；导入兼容旧版直接导出 JSON 数组的备份。导入采用事务合并、重复检测和撤回候选 ID 重映射。
 - **数据限制**：备份文件最大 50 MiB，单个备份最多 10,000 条记录；字段长度和撤回关联数组均有上限。导出时如果本机总记录超过 10,000 条会明确失败，不会静默截断。
 - **Shizuku 状态**：检测 Binder 在线和应用授权状态。Shizuku 为可选项，通知留存本身不依赖 Shizuku。
@@ -64,6 +67,19 @@ gradle --no-daemon assembleDebug
 
 GitHub Actions 会在 push / PR / 手动触发时执行单元测试和 Debug APK 构建，上传当前版本对应的 Debug APK、源码和测试报告 artifacts。
 
+### 正式 Release 签名与发布
+
+Release 签名由 .github/workflows/release.yml 负责，只在推送与 versionName 一致的 v* 标签时执行。签名文件不进入仓库，需在 GitHub 仓库 Settings → Secrets and variables → Actions 中配置以下 Repository secrets：
+
+- RELEASE_KEYSTORE_BASE64：正式签名 JKS/PKCS12 文件的 Base64 内容。
+- RELEASE_KEYSTORE_PASSWORD：keystore 密码。
+- RELEASE_KEY_ALIAS：签名 key alias。
+- RELEASE_KEY_PASSWORD：key 密码。
+
+工作流会校验标签版本、解码临时 keystore、运行单元测试、构建 Release APK、验证 APK 签名、生成 SHA-256 校验文件，并创建 GitHub Release。缺少任何签名 secret 时会失败退出，不会发布未签名 APK。
+
+**签名兼容警告：** Release 必须使用与你准备继续升级的已安装版本相同的签名证书，否则 Android 不允许覆盖安装。不要随意新建密钥替换旧发布密钥，也不要把 keystore 或密码提交到仓库。更换签名身份前，必须先在旧应用中成功导出加密备份并验证可恢复性。
+
 ## 安全边界与已知限制
 
 - Android Keystore 记录密钥不可导出。卸载应用、清除应用数据、重置设备或 Keystore 密钥失效后，旧数据库密文可能无法解密；重要记录应定期导出密码加密备份。
@@ -75,7 +91,8 @@ GitHub Actions 会在 push / PR / 手动触发时执行单元测试和 Debug APK
 - 本应用不保证抓取附件原文件、完整媒体内容、微信私有数据库内容或离线期间未交付的通知。
 - 设备锁保护依赖 Android 系统设备凭据；它不是独立密码库，也不替代系统锁屏和设备加密。
 - 压缩只应用于新写入的记录；旧记录不会在每次启动时批量重写，以免产生一次性 CPU 峰值和数据迁移风险。
-- 不包含云同步、远程控制、正式 Release 签名配置或 UI 自动化真机测试。
+- 不包含云同步或远程控制。正式 Release 签名发布工作流已提供，但必须由仓库所有者配置有效签名 Secrets 后，推送匹配版本标签才能实际产出并发布签名 APK。
+- 备份提醒目前为应用内提醒：需要打开应用才会检查，不属于后台定时通知。
 
 ## 验证范围
 
