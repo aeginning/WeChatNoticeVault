@@ -44,3 +44,22 @@ JUnit tests cover the pure-Java compression helper and its decompression limit. 
 - Added an Android adaptive launcher icon using the latest Library image supplied by the user (`mmexport1794946980382.jpg`, sunflower field photograph), cropped/resized as the foreground artwork with a blue background layer.
 - Configured both `android:icon` and `android:roundIcon` to the adaptive icon resource.
 - Incremented versionName to 2.1.6 and versionCode to 216. No package ID, database schema, or Keystore alias changes.
+
+
+# 2.1.8 data safety and stability hardening
+
+- Stop automatic Android Keystore alias regeneration during record decryption. The alias is created for initial writes only when the vault database has no rows.
+- Add a read-only SQLite quick integrity check and database/WAL/SHM size reporting; no automatic repair or destructive recovery is attempted.
+- Add a non-destructive composite index migration and visible notification queue overflow counts.
+- Expand backup encryption and compression regression tests.
+
+# 2.1.9 favorites, filters, themes and optional release signing
+
+- Add SQLite schema v3 with a favorite bit and favorite/time index. Existing rows and AES-GCM payload bytes are not rewritten; older rows default to not-favorite.
+- Keep favorite status in a dedicated metadata column rather than re-encrypting message content. Backup JSON carries favorite state and restores it when importing; merge imports add favorites but do not remove an existing local favorite.
+- Add transactional chunked batch favorite/delete operations in groups of 900 IDs to stay below common SQLite bind-parameter limits. Bulk delete is limited to explicitly selected record IDs.
+- Add date presets (all, 24 hours, 7 days, 30 days), app-source filtering and favorites-only filtering while retaining keyset pagination. App package names remain inside encrypted payloads and are checked after decryption rather than exposed as plaintext indexes.
+- Add system/light/dark appearance modes and a backup reminder after seven days without a successful backup, limited to one prompt every three days.
+- Add optional GitHub Actions Release signing using user-provided Repository Secrets. No keystore or password is stored in the repository. Without all four secrets the release build is skipped and Debug build/test remains the default.
+- Bump versionName to 2.1.9 and versionCode to 219. Application ID, existing Keystore alias and encrypted payload format remain unchanged.
+- Device validation remains required for SQLite v3 migration, favorites/batch operations, night mode, reminder timing and actual signing-key compatibility.
