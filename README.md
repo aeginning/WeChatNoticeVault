@@ -1,8 +1,18 @@
-# 微信防撤回 2.1.8
+# 微信防撤回 2.1.9
 
 Android 原生 Java 项目，面向 Android 8.0+（minSdk 26），JDK 17、AGP 8.7.3、Gradle 8.9、compileSdk 35。包名 `com.aeginning.noticevault`。
 
 > 本项目通过 Android `NotificationListenerService` 读取系统实际交付给应用的通知字段。它不是微信注入/破解工具，不能读取微信私有数据库，也不能恢复未出现在系统通知中的消息、隐藏预览、图片、语音或视频。
+
+## 本次 2.1.9 改进
+
+- **收藏消息**：消息卡片可单条收藏/取消收藏；收藏状态存放在 SQLite 的独立 favorite 元数据列，不修改已加密的正文密文。备份会保留收藏状态。
+- **批量管理**：可进入管理模式，对已加载的记录批量全选、收藏、取消收藏和删除；删除前二次确认，操作仅作用于明确选中的记录。
+- **高级筛选**：支持全部时间、最近 24 小时、7 天、30 天，以及按当前允许留存通知的应用来源筛选，并可仅查看收藏记录。筛选仍采用分页加载。
+- **主题设置**：支持跟随系统、浅色和深色模式，界面组件及系统对话框同步切换。
+- **备份提醒**：当本机存在记录且连续 7 天没有成功导出加密备份时提示；提醒至少间隔 3 天，不会在没有记录时打扰用户。
+- **数据库 schema v3**：新增 favorite 列及其时间索引。旧库升级使用 ALTER TABLE 和新增索引，旧消息行及 AES-GCM 密文保持原样；旧备份缺少收藏字段时默认未收藏。
+- **可选正式签名构建**：GitHub Actions 支持从仓库 Secrets 获取用户自己的 Android keystore，条件式构建 Release APK。未配置 Secrets 时跳过 Release 构建，Debug 编译和测试照常执行。
 
 ## 本次性能改进
 
@@ -26,6 +36,9 @@ Android 原生 Java 项目，面向 Android 8.0+（minSdk 26），JDK 17、AGP 8
 - **自动清理**：用户可选永久保留、7 天、30 天或 90 天。默认关闭自动清理；开启后约每 12 小时执行一次过期记录清理。
 - **设备锁保护**：可要求使用 Android 系统设备凭据验证；应用启用 `FLAG_SECURE` 隐藏最近任务缩略图。
 - **消息详情与复制**：点击列表记录可查看完整通知内容并复制。
+- **收藏与批量管理**：单条收藏/取消收藏；管理模式支持对已加载记录批量收藏、取消收藏和删除。
+- **高级筛选**：支持最近 24 小时、7 天、30 天等时间范围、应用来源和仅收藏筛选。应用来源字段仍在加密载荷中，来源筛选需要逐条解密候选记录，不建立明文应用名索引。
+- **主题模式**：支持跟随系统、浅色和深色主题。
 - **加密备份/恢复**：`.nvbk` 使用 PBKDF2-HMAC-SHA256（210,000 次迭代）派生 256 位密钥，再用 AES-256-GCM 加密。新备份包含格式版本号；导入兼容旧版直接导出 JSON 数组的备份。导入采用事务合并、重复检测和撤回候选 ID 重映射。
 - **数据限制**：备份文件最大 50 MiB，单个备份最多 10,000 条记录；字段长度和撤回关联数组均有上限。导出时如果本机总记录超过 10,000 条会明确失败，不会静默截断。
 - **Shizuku 状态**：检测 Binder 在线和应用授权状态。Shizuku 为可选项，通知留存本身不依赖 Shizuku。
@@ -46,7 +59,8 @@ Android 原生 Java 项目，面向 Android 8.0+（minSdk 26），JDK 17、AGP 8
 - 导入同时接受旧版本的 JSON 数组根结构，因此可导入旧版 2.1.0/2.1.2 备份。
 - 导入采用数据库事务；格式校验或写入失败会回滚本次批量导入。
 - 相同时间、类型、应用、会话、标题和正文均相同的记录会被跳过，避免重复恢复。
-- 数据库 schema v2 只增加复合索引，未改变字段、记录密文格式或 Keystore alias；升级由 SQLite 非破坏性执行。
+- 数据库 schema v2 增加分类复合索引；schema v3 增加收藏标志列和收藏/时间索引。升级均不删除、重写现有消息行或修改 Keystore alias。
+- 老备份不含 favorite 字段时按未收藏处理；新备份会导出并恢复收藏状态。
 
 ## 构建
 
@@ -57,21 +71,32 @@ gradle --no-daemon testDebugUnitTest
 gradle --no-daemon assembleDebug
 ```
 
-GitHub Actions 会在 push / PR / 手动触发时执行单元测试和 Debug APK 构建，上传当前版本对应的 Debug APK、源码和测试报告 artifacts。
+GitHub Actions 会在 push / PR / 手动触发时执行单元测试、Debug APK 构建并上传源码和测试报告。只有同时配置完整的 Release 签名 Secrets 时才额外构建签名 Release APK。
+
+## Release 签名配置
+
+如需让 GitHub Actions 构建可覆盖安装的正式 Release APK，请在仓库 Settings → Secrets and variables → Actions 中配置以下 Repository Secrets：
+
+- RELEASE_KEYSTORE_BASE64：你的 .jks / .keystore 文件内容经 Base64 编码后的单行文本。
+- RELEASE_STORE_PASSWORD：keystore 密码。
+- RELEASE_KEY_ALIAS：签名条目的 alias。
+- RELEASE_KEY_PASSWORD：签名条目的密码。
+
+keystore 可在本地使用 base64 -w 0 your-release-key.jks 编码；不要将原始 keystore、密码、Base64 内容或签名文件提交到 Git 仓库。请安全离线备份 keystore，丢失正式签名密钥可能导致未来版本无法覆盖升级。未配置上述四项时 CI 不会生成 Release APK，只生成 Debug APK。
 
 ## 安全边界与已知限制
 
 - Android Keystore 记录密钥不可导出。卸载应用、清除应用数据、重置设备或 Keystore 密钥失效后，旧数据库密文可能无法解密；重要记录应定期导出密码加密备份。
 - **密钥失效保护**：解密时如果 Keystore alias 缺失或不可读取，应用会停止解密并拒绝自动生成替代密钥。只有数据库确认为空时，首次写入才允许创建密钥；这样可避免新密钥覆盖旧密文的解密路径。遇到密钥警告时不要卸载应用或清除应用数据。
 - 本地数据检查只验证 SQLite 结构及密钥 alias 是否存在；alias 存在不代表每条加密记录均可解密。检查异常时应用不会自动清空、重建或尝试修复数据库。
-- SQLite 中时间戳和记录类型未加密；若需要隐藏全部数据库元数据，需要另行评估 SQLCipher 整库加密迁移，并设计数据迁移/回滚方案。
+- SQLite 中时间戳、记录类型和收藏标志未加密；若需要隐藏全部数据库元数据，需要另行评估 SQLCipher 整库加密迁移，并设计数据迁移/回滚方案。
 - `allowBackup=false` 禁止 Android 自动备份应用数据，但不能防止获得设备高权限的人访问系统级存储。
 - 通知关闭、静音、无预览、内容折叠、通知未送达或系统未提供正文时，应用无法恢复缺失内容。
 - 本应用不保证抓取附件原文件、完整媒体内容、微信私有数据库内容或离线期间未交付的通知。
 - 设备锁保护依赖 Android 系统设备凭据；它不是独立密码库，也不替代系统锁屏和设备加密。
 - 压缩只应用于新写入的记录；旧记录不会在每次启动时批量重写，以免产生一次性 CPU 峰值和数据迁移风险。
-- 不包含云同步、远程控制、正式 Release 签名配置或 UI 自动化真机测试。
+- 不包含云同步、远程控制或 UI 自动化真机测试。Release 签名依赖用户自行配置 GitHub Secrets；本仓库不包含任何签名私钥。
 
 ## 验证范围
 
-JUnit 测试覆盖备份加解密、错误密码、随机盐/随机 nonce、格式头校验、篡改检测、撤回提示识别，以及压缩/解压、精确边界和解压上限。Android Keystore、SQLite VACUUM、NotificationListenerService、设备凭据提示、厂商后台策略及 UI 交互仍需在真实 Android 设备上验收。
+JUnit 测试覆盖备份加解密、错误密码、随机盐/随机 nonce、格式头校验、篡改检测、撤回提示识别，以及压缩/解压、精确边界和解压上限。数据库 schema v3 迁移、收藏批量操作、主题与备份提醒仍需在真实 Android 设备上验收。Android Keystore、SQLite VACUUM、NotificationListenerService、设备凭据提示、厂商后台策略及 UI 交互仍需在真实 Android 设备上验收。
