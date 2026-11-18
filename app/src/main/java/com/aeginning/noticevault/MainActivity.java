@@ -26,6 +26,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -57,12 +58,13 @@ public class MainActivity extends Activity {
     private static final int MAX_BACKUP_RECORDS = 10000;
     private static final int MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
-    private static final int COLOR_BG = Color.rgb(244, 247, 251);
-    private static final int COLOR_TEXT = Color.rgb(28, 42, 58);
-    private static final int COLOR_MUTED = Color.rgb(106, 121, 139);
-    private static final int COLOR_BLUE = Color.rgb(38, 105, 190);
-    private static final int COLOR_GREEN = Color.rgb(26, 142, 100);
-    private static final int COLOR_RED = Color.rgb(190, 65, 73);
+    private int COLOR_BG = Color.rgb(244, 247, 251);
+    private int COLOR_TEXT = Color.rgb(28, 42, 58);
+    private int COLOR_MUTED = Color.rgb(106, 121, 139);
+    private int COLOR_BLUE = Color.rgb(38, 105, 190);
+    private int COLOR_GREEN = Color.rgb(26, 142, 100);
+    private int COLOR_RED = Color.rgb(190, 65, 73);
+    private boolean darkTheme;
 
     private LinearLayout recordList;
     private TextView recordCount;
@@ -74,7 +76,16 @@ public class MainActivity extends Activity {
     private TextView totalCountValue;
     private TextView todayCountValue;
     private LinearLayout filterRow;
+    private LinearLayout advancedFilterRow;
+    private LinearLayout selectionToolbar;
+    private TextView manageRecordsView;
     private TextView loadMoreView;
+    private final Set<Long> selectedRecordIds = new HashSet<>();
+    private final List<VaultRecord> visibleRecords = new ArrayList<>();
+    private boolean selectionMode;
+    private int dateFilterDays;
+    private boolean favoriteOnlyFilter;
+    private String currentPackageFilter = "";
     private String shizukuMessage = "Shizuku 权限状态尚未检查";
     private char[] pendingPassword;
     private boolean backupRunning;
@@ -121,22 +132,38 @@ public class MainActivity extends Activity {
     public void onCreate(Bundle state) {
         super.onCreate(state);
         Shizuku.addRequestPermissionResultListener(permissionListener);
+        configureTheme();
         configureSystemBars();
         buildUi();
         refreshStatus();
     }
 
+    private void configureTheme() {
+        String mode = VaultPreferences.getThemeMode(this);
+        int systemNight = getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        darkTheme = VaultPreferences.THEME_DARK.equals(mode)
+                || (VaultPreferences.THEME_SYSTEM.equals(mode)
+                && systemNight == android.content.res.Configuration.UI_MODE_NIGHT_YES);
+        COLOR_BG = darkTheme ? 0xFF111820 : Color.rgb(244, 247, 251);
+        COLOR_TEXT = darkTheme ? 0xFFE8EDF4 : Color.rgb(28, 42, 58);
+        COLOR_MUTED = darkTheme ? 0xFFADB9C6 : Color.rgb(106, 121, 139);
+        COLOR_BLUE = darkTheme ? 0xFF79B5F2 : Color.rgb(38, 105, 190);
+        COLOR_GREEN = darkTheme ? 0xFF75D0A6 : Color.rgb(26, 142, 100);
+        COLOR_RED = darkTheme ? 0xFFFF9299 : Color.rgb(190, 65, 73);
+    }
+
     private void configureSystemBars() {
         Window window = getWindow();
         window.setStatusBarColor(COLOR_BG);
-        window.setNavigationBarColor(Color.WHITE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-            );
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        window.setNavigationBarColor(darkTheme ? 0xFF202A35 : Color.WHITE);
+        int visibility = 0;
+        if (!darkTheme && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            visibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        } else if (!darkTheme && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            visibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
         }
+        window.getDecorView().setSystemUiVisibility(visibility);
     }
 
     private void buildUi() {
@@ -164,7 +191,8 @@ public class MainActivity extends Activity {
         addActionCard(root, "◷", "自动清理期限", "可关闭，或设置保留 7 / 30 / 90 天", COLOR_MUTED, this::showRetentionDialog);
         addActionCard(root, "▤", "设备锁保护", "使用手机系统锁屏密码或生物识别验证", COLOR_GREEN, this::toggleAppLock);
 
-        addSectionHeading(root, "备份与数据", "备份文件使用密码加密，请妥善保管密码");
+        addSectionHeading(root, "个性化与备份", "调整显示效果，定期保护本地数据");
+        addActionCard(root, "◐", "界面主题", "跟随系统，或固定使用浅色 / 深色模式", COLOR_BLUE, this::showThemeDialog);
         addActionCard(root, "⇧", "导出加密备份", "将本机留存记录导出为 .nvbk 文件", COLOR_BLUE, () -> passwordDialog(true));
         addActionCard(root, "⇩", "导入加密备份", "从已有备份恢复记录", COLOR_GREEN, () -> passwordDialog(false));
         addActionCard(root, "✓", "检查本地数据完整性", "只读检查 SQLite 结构、密钥别名和存储占用", COLOR_GREEN, this::checkDatabaseHealth);
