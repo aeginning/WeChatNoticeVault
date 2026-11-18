@@ -15,6 +15,12 @@ public final class VaultPreferences {
     private static final String KEY_APP_LOCK = "device_credential_lock";
     private static final String KEY_LAST_CLEANUP = "last_retention_cleanup";
     private static final String KEY_DROPPED_NOTIFICATIONS = "dropped_notification_count";
+    private static final String KEY_THEME_MODE = "theme_mode";
+    private static final String KEY_LAST_BACKUP = "last_successful_backup";
+    private static final String KEY_BACKUP_REMINDER = "last_backup_reminder";
+    public static final String THEME_SYSTEM = "system";
+    public static final String THEME_LIGHT = "light";
+    public static final String THEME_DARK = "dark";
     private static final long CLEANUP_INTERVAL_MS = 12L * 60L * 60L * 1000L;
 
     private VaultPreferences() { }
@@ -84,6 +90,47 @@ public final class VaultPreferences {
         return Math.max(0L, prefs(context).getLong(KEY_DROPPED_NOTIFICATIONS, 0L));
     }
 
+    public static String getThemeMode(Context context) {
+        String mode = prefs(context).getString(KEY_THEME_MODE, THEME_SYSTEM);
+        if (THEME_LIGHT.equals(mode) || THEME_DARK.equals(mode)) return mode;
+        return THEME_SYSTEM;
+    }
+
+    public static void setThemeMode(Context context, String mode) {
+        if (!THEME_SYSTEM.equals(mode) && !THEME_LIGHT.equals(mode) && !THEME_DARK.equals(mode)) {
+            throw new IllegalArgumentException("Unsupported theme mode");
+        }
+        prefs(context).edit().putString(KEY_THEME_MODE, mode).apply();
+    }
+
+    public static long getLastBackupTime(Context context) {
+        return Math.max(0L, prefs(context).getLong(KEY_LAST_BACKUP, 0L));
+    }
+
+    public static void setLastBackupTime(Context context, long timestamp) {
+        prefs(context).edit().putLong(KEY_LAST_BACKUP, Math.max(0L, timestamp)).apply();
+    }
+
+    /** Show a reminder only when records exist, at least seven days have elapsed, and reminders are not nagging daily. */
+    public static boolean shouldShowBackupReminder(Context context, long now, boolean hasRecords) {
+        if (!hasRecords) return false;
+        long anchor = getLastBackupTime(context);
+        if (anchor <= 0L) {
+            try {
+                anchor = context.getPackageManager().getPackageInfo(context.getPackageName(), 0).firstInstallTime;
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        if (now < anchor || now - anchor < 7L * 24L * 60L * 60L * 1000L) return false;
+        long lastReminder = prefs(context).getLong(KEY_BACKUP_REMINDER, 0L);
+        return lastReminder <= 0L || now < lastReminder
+                || now - lastReminder >= 3L * 24L * 60L * 60L * 1000L;
+    }
+
+    public static void markBackupReminderShown(Context context, long now) {
+        prefs(context).edit().putLong(KEY_BACKUP_REMINDER, now).apply();
+    }
     /** Run cleanup at most twice per day, and only when the user explicitly selected a period. */
     public static synchronized int maybeCleanupExpired(Context context, VaultDb db, long now)
             throws Exception {
